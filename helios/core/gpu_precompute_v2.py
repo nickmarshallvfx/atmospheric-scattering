@@ -6,9 +6,9 @@ APPROACH: Direct, faithful port of Bruneton reference_functions.glsl
 - Each step verified against reference before proceeding
 - Git commit at each verified milestone
 
-VERSION: 3 - Transmittance + Single Scattering + Direct Irradiance
+VERSION: 4 - Transmittance + Single Scattering + Indirect Irradiance (order 1)
 """
-print("[Helios GPU v2] Module loaded - VERSION 3 (+ direct irradiance)")
+print("[Helios GPU v2] Module loaded - VERSION 4 (+ indirect irradiance order 1)")
 
 import os
 import numpy as np
@@ -729,6 +729,164 @@ void main() {
 
 
 # =============================================================================
+# INDIRECT IRRADIANCE SHADER - Computes irradiance from scattered light
+# =============================================================================
+def create_indirect_irradiance_shader() -> 'gpu.types.GPUShader':
+    """
+    Create indirect irradiance shader.
+    
+    Integrates scattered radiance over the hemisphere to compute ground irradiance.
+    For order 1: uses single scattering (Rayleigh + Mie with phase functions)
+    """
+    shader_info = gpu.types.GPUShaderCreateInfo()
+    
+    shader_info.vertex_in(0, 'VEC2', 'pos')
+    
+    vert_out = gpu.types.GPUStageInterfaceInfo("ii_vert_iface")
+    vert_out.smooth('VEC2', 'uv')
+    shader_info.vertex_out(vert_out)
+    
+    shader_info.push_constant('FLOAT', 'bottom_radius')
+    shader_info.push_constant('FLOAT', 'top_radius')
+    shader_info.push_constant('FLOAT', 'mu_s_min')
+    shader_info.push_constant('FLOAT', 'mie_phase_g')
+    shader_info.push_constant('INT', 'scattering_order')
+    
+    shader_info.sampler(0, 'FLOAT_2D', 'single_rayleigh_texture')
+    shader_info.sampler(1, 'FLOAT_2D', 'single_mie_texture')
+    
+    shader_info.fragment_out(0, 'VEC4', 'fragColor')
+    
+    shader_info.vertex_source('''
+void main() {
+    uv = pos * 0.5 + 0.5;
+    gl_Position = vec4(pos, 0.0, 1.0);
+}
+''')
+    
+    shader_info.fragment_source('''
+#define PI 3.14159265358979323846
+#define SCATTERING_TEXTURE_R_SIZE 32
+#define SCATTERING_TEXTURE_MU_SIZE 128
+#define SCATTERING_TEXTURE_MU_S_SIZE 32
+#define SCATTERING_TEXTURE_NU_SIZE 8
+#define SCATTERING_TEXTURE_DEPTH 32
+#define IRRADIANCE_TEXTURE_WIDTH 64
+#define IRRADIANCE_TEXTURE_HEIGHT 16
+#define SAMPLE_COUNT 32
+
+float SafeSqrt(float x) { return sqrt(max(x, 0.0)); }
+float ClampCosine(float mu) { return clamp(mu, -1.0, 1.0); }
+
+float GetUnitRangeFromTextureCoord(float u, float tex_size) {
+    return (u - 0.5 / tex_size) / (1.0 - 1.0 / tex_size);
+}
+
+float GetTextureCoordFromUnitRange(float x, float tex_size) {
+    return 0.5 / tex_size + x * (1.0 - 1.0 / tex_size);
+}
+
+float DistanceToTop(float r, float mu) {
+    float disc = r * r * (mu * mu - 1.0) + top_radius * top_radius;
+    return max(0.0, -r * mu + SafeSqrt(disc));
+}
+
+float RayleighPhaseFunction(float nu) {
+    return (3.0 / (16.0 * PI)) * (1.0 + nu * nu);
+}
+
+float MiePhaseFunction(float g, float nu) {
+    float g2 = g * g;
+    return (3.0 / (8.0 * PI)) * ((1.0 - g2) * (1.0 + nu * nu)) /
+           ((2.0 + g2) * pow(1.0 + g2 - 2.0 * g * nu, 1.5));
+}
+
+// Sample scattering from tiled 2D texture
+vec3 SampleScattering(sampler2D tex, float r, float mu, float mu_s, float nu) {
+    if (mu_s < mu_s_min) return vec3(0.0);
+    
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    float u_r = GetTextureCoordFromUnitRange(rho / H, float(SCATTERING_TEXTURE_R_SIZE));
+    
+    // For indirect irradiance, we only sample upward directions (mu >= 0)
+    // so we use the upper half of the mu range
+    float r_mu = r * mu;
+    float discriminant = r_mu * r_mu - r * r + bottom_radius * bottom_radius;
+    float d = -r_mu + SafeSqrt(discriminant + H * H);
+    float d_min = top_radius - r;
+    float d_max = rho + H;
+    float u_mu = 0.5 + 0.5 * GetTextureCoordFromUnitRange(
+        (d_max > d_min) ? (d - d_min) / (d_max - d_min) : 0.0,
+        float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
+    
+    // mu_s coordinate
+    float d_s = DistanceToTop(bottom_radius, mu_s);
+    float d_s_min = top_radius - bottom_radius;
+    float d_s_max = H;
+    float a = (d_s - d_s_min) / (d_s_max - d_s_min);
+    float D = DistanceToTop(bottom_radius, mu_s_min);
+    float A = (D - d_s_min) / (d_s_max - d_s_min);
+    float u_mu_s = GetTextureCoordFromUnitRange(max(1.0 - a / A, 0.0) / (1.0 + a), float(SCATTERING_TEXTURE_MU_S_SIZE));
+    
+    // nu coordinate
+    float u_nu = (clamp(nu, -1.0, 1.0) + 1.0) * 0.5;
+    
+    // Sample from tiled texture
+    int layer = int(u_r * float(SCATTERING_TEXTURE_DEPTH));
+    layer = clamp(layer, 0, SCATTERING_TEXTURE_DEPTH - 1);
+    float u_within_slice = clamp(u_nu + u_mu_s / float(SCATTERING_TEXTURE_NU_SIZE), 0.0, 0.9999);
+    float tex_x = (float(layer) + u_within_slice) / float(SCATTERING_TEXTURE_DEPTH);
+    
+    return texture(tex, vec2(tex_x, u_mu)).rgb;
+}
+
+void main() {
+    // Get r, mu_s from irradiance texture coordinates
+    float x_mu_s = GetUnitRangeFromTextureCoord(uv.x, float(IRRADIANCE_TEXTURE_WIDTH));
+    float x_r = GetUnitRangeFromTextureCoord(uv.y, float(IRRADIANCE_TEXTURE_HEIGHT));
+    
+    float r = bottom_radius + x_r * (top_radius - bottom_radius);
+    float mu_s = ClampCosine(2.0 * x_mu_s - 1.0);
+    
+    // Sun direction (in local frame where z is up)
+    vec3 omega_s = vec3(sqrt(1.0 - mu_s * mu_s), 0.0, mu_s);
+    
+    float dphi = PI / float(SAMPLE_COUNT);
+    float dtheta = PI / float(SAMPLE_COUNT);
+    vec3 result = vec3(0.0);
+    
+    // Integrate over upper hemisphere only (j < SAMPLE_COUNT/2)
+    for (int j = 0; j < SAMPLE_COUNT / 2; ++j) {
+        float theta = (float(j) + 0.5) * dtheta;
+        float cos_theta = cos(theta);
+        float sin_theta = sin(theta);
+        
+        for (int i = 0; i < 2 * SAMPLE_COUNT; ++i) {
+            float phi = (float(i) + 0.5) * dphi;
+            vec3 omega = vec3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+            float domega = dtheta * dphi * sin_theta;
+            
+            float nu = dot(omega, omega_s);
+            
+            // For order 1, sample single scattering with phase functions
+            vec3 rayleigh = SampleScattering(single_rayleigh_texture, r, omega.z, mu_s, nu);
+            vec3 mie = SampleScattering(single_mie_texture, r, omega.z, mu_s, nu);
+            vec3 scattering = rayleigh * RayleighPhaseFunction(nu) + mie * MiePhaseFunction(mie_phase_g, nu);
+            
+            // Irradiance = integral of L * cos(theta) * domega
+            result += scattering * omega.z * domega;
+        }
+    }
+    
+    fragColor = vec4(result, 1.0);
+}
+''')
+    
+    return gpu.shader.create_from_info(shader_info)
+
+
+# =============================================================================
 # PRECOMPUTED TEXTURES CONTAINER
 # =============================================================================
 @dataclass
@@ -956,12 +1114,81 @@ class GPUPrecomputeV2:
         
         return irradiance
     
+    def _create_scattering_texture(self, data: np.ndarray) -> 'gpu.types.GPUTexture':
+        """Create GPU texture from 4D scattering data (tiled 2D)."""
+        depth, height, width = data.shape[:3]
+        channels = data.shape[3] if len(data.shape) > 3 else 1
+        
+        # Tile into 2D: width = depth * original_width
+        tiled_width = depth * width
+        if channels >= 3:
+            tiled = np.zeros((height, tiled_width, 4), dtype=np.float32)
+            for z in range(depth):
+                tiled[:, z * width:(z + 1) * width, :channels] = data[z, :, :, :channels]
+                if channels < 4:
+                    tiled[:, z * width:(z + 1) * width, 3] = 1.0
+        else:
+            tiled = np.zeros((height, tiled_width, 4), dtype=np.float32)
+            for z in range(depth):
+                tiled[:, z * width:(z + 1) * width, 0] = data[z].squeeze()
+            tiled[:, :, 3] = 1.0
+        
+        buf = gpu.types.Buffer('FLOAT', tiled_width * height * 4, tiled.flatten().tolist())
+        return gpu.types.GPUTexture(size=(tiled_width, height), format='RGBA32F', data=buf)
+    
+    def precompute_indirect_irradiance(self, scattering: np.ndarray, 
+                                       delta_mie: np.ndarray) -> np.ndarray:
+        """
+        Compute indirect irradiance from single scattering (order 1).
+        
+        This integrates the single scattered radiance over the hemisphere.
+        """
+        print("[Helios GPU v2] Computing indirect irradiance (order 1)...")
+        
+        # Extract rayleigh from scattering (RGB channels)
+        delta_rayleigh = scattering[:, :, :, :3].copy()
+        
+        # Create GPU textures for single scattering
+        single_rayleigh_tex = self._create_scattering_texture(delta_rayleigh)
+        single_mie_tex = self._create_scattering_texture(delta_mie)
+        
+        shader = create_indirect_irradiance_shader()
+        
+        p = self.params
+        import math
+        mu_s_min = math.cos(102.0 / 180.0 * math.pi)
+        
+        uniforms = {
+            'bottom_radius': float(p.bottom_radius),
+            'top_radius': float(p.top_radius),
+            'mu_s_min': float(mu_s_min),
+            'mie_phase_g': float(p.mie_phase_g),
+            'scattering_order': 1,
+        }
+        
+        pixels = self._render_to_texture(
+            shader,
+            IRRADIANCE_TEXTURE_WIDTH,
+            IRRADIANCE_TEXTURE_HEIGHT,
+            uniforms,
+            textures={
+                'single_rayleigh_texture': single_rayleigh_tex,
+                'single_mie_texture': single_mie_tex,
+            }
+        )
+        
+        irradiance = pixels[:, :, :3].astype(np.float32)
+        
+        print(f"  [DEBUG] Indirect irradiance (order 1) range: min={irradiance.min():.6f}, max={irradiance.max():.6f}")
+        
+        return irradiance
+    
     def precompute(self, num_scattering_orders: int = 4,
                    progress_callback: Callable = None) -> PrecomputedTexturesV2:
         """
         Run full precomputation.
         
-        V2: Transmittance + Single Scattering + Direct Irradiance
+        V2: Transmittance + Single Scattering + Indirect Irradiance (order 1)
         """
         import time
         start_time = time.perf_counter()
@@ -989,14 +1216,15 @@ class GPUPrecomputeV2:
         delta_irradiance_direct = self.precompute_direct_irradiance(transmittance)
         
         if progress_callback:
-            progress_callback(0.6, "Direct irradiance complete")
+            progress_callback(0.6, "Computing indirect irradiance (GPU v2)...")
         
-        # Irradiance texture starts at ZERO - only indirect irradiance is stored
-        # This matches reference behavior where irradiance.exr = indirect only
-        irradiance = np.zeros((IRRADIANCE_TEXTURE_HEIGHT, IRRADIANCE_TEXTURE_WIDTH, 3), 
-                              dtype=np.float32)
+        # Step 4: Indirect Irradiance from single scattering (order 1)
+        # This is the first contribution to the irradiance texture
+        irradiance = self.precompute_indirect_irradiance(scattering, delta_mie)
         
-        # TODO: Add multiple scattering which computes indirect irradiance and adds to texture
+        print(f"  [DEBUG] Final irradiance range: min={irradiance.min():.6f}, max={irradiance.max():.6f}")
+        
+        # TODO: Add higher order multiple scattering (orders 2-4)
         
         if progress_callback:
             progress_callback(1.0, "GPU v2 precomputation complete")
