@@ -801,16 +801,17 @@ float MiePhaseFunction(float g, float nu) {
            ((2.0 + g2) * pow(1.0 + g2 - 2.0 * g * nu, 1.5));
 }
 
-// Sample scattering from tiled 2D texture
+// Sample scattering from tiled 2D texture - matches reference GetScattering
 vec3 SampleScattering(sampler2D tex, float r, float mu, float mu_s, float nu) {
     if (mu_s < mu_s_min) return vec3(0.0);
     
     float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
     float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    
+    // u_r coordinate (w in reference uvwz)
     float u_r = GetTextureCoordFromUnitRange(rho / H, float(SCATTERING_TEXTURE_R_SIZE));
     
-    // For indirect irradiance, we only sample upward directions (mu >= 0)
-    // so we use the upper half of the mu range
+    // u_mu coordinate (z in reference uvwz) - upward rays only
     float r_mu = r * mu;
     float discriminant = r_mu * r_mu - r * r + bottom_radius * bottom_radius;
     float d = -r_mu + SafeSqrt(discriminant + H * H);
@@ -820,7 +821,7 @@ vec3 SampleScattering(sampler2D tex, float r, float mu, float mu_s, float nu) {
         (d_max > d_min) ? (d - d_min) / (d_max - d_min) : 0.0,
         float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
     
-    // mu_s coordinate
+    // u_mu_s coordinate (y in reference uvwz)
     float d_s = DistanceToTop(bottom_radius, mu_s);
     float d_s_min = top_radius - bottom_radius;
     float d_s_max = H;
@@ -829,16 +830,32 @@ vec3 SampleScattering(sampler2D tex, float r, float mu, float mu_s, float nu) {
     float A = (D - d_s_min) / (d_s_max - d_s_min);
     float u_mu_s = GetTextureCoordFromUnitRange(max(1.0 - a / A, 0.0) / (1.0 + a), float(SCATTERING_TEXTURE_MU_S_SIZE));
     
-    // nu coordinate
+    // u_nu coordinate (x in reference uvwz)
     float u_nu = (clamp(nu, -1.0, 1.0) + 1.0) * 0.5;
     
-    // Sample from tiled texture
+    // Reference texture lookup with nu interpolation:
+    // tex_coord_x = u_nu * (NU_SIZE - 1), then interpolate between floor and ceil
+    float tex_coord_nu = u_nu * float(SCATTERING_TEXTURE_NU_SIZE - 1);
+    float tex_nu_floor = floor(tex_coord_nu);
+    float lerp = tex_coord_nu - tex_nu_floor;
+    
+    // Layer from r coordinate
     int layer = int(u_r * float(SCATTERING_TEXTURE_DEPTH));
     layer = clamp(layer, 0, SCATTERING_TEXTURE_DEPTH - 1);
-    float u_within_slice = clamp(u_nu + u_mu_s / float(SCATTERING_TEXTURE_NU_SIZE), 0.0, 0.9999);
-    float tex_x = (float(layer) + u_within_slice) / float(SCATTERING_TEXTURE_DEPTH);
     
-    return texture(tex, vec2(tex_x, u_mu)).rgb;
+    // Combined x coordinate: (nu_idx + u_mu_s) / NU_SIZE within each layer
+    // Reference: uvw0.x = (tex_x + uvwz.y) / NU_SIZE
+    float u_within_slice_0 = (tex_nu_floor + u_mu_s) / float(SCATTERING_TEXTURE_NU_SIZE);
+    float u_within_slice_1 = (min(tex_nu_floor + 1.0, float(SCATTERING_TEXTURE_NU_SIZE - 1)) + u_mu_s) / float(SCATTERING_TEXTURE_NU_SIZE);
+    
+    float tex_x_0 = (float(layer) + u_within_slice_0) / float(SCATTERING_TEXTURE_DEPTH);
+    float tex_x_1 = (float(layer) + u_within_slice_1) / float(SCATTERING_TEXTURE_DEPTH);
+    
+    // Bilinear interpolation between nu slices
+    vec3 sample0 = texture(tex, vec2(tex_x_0, u_mu)).rgb;
+    vec3 sample1 = texture(tex, vec2(tex_x_1, u_mu)).rgb;
+    
+    return mix(sample0, sample1, lerp);
 }
 
 void main() {

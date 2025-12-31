@@ -11,7 +11,7 @@ define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
             <split size="1257" stretch="1"/>
             <splitter orientation="2">
                 <split size="638"/>
-                <dock id="" activePageId="Viewer.1">
+                <dock id="" activePageId="Viewer.1" focus="true">
                     <page id="Viewer.1"/>
                 </dock>
                 <split size="449"/>
@@ -70,10 +70,31 @@ Read {
 Read {
  inputs 0
  file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/helios_cache/luts_backup_working/transmittance.exr
+ format "256 64 0 0 256 64 1 "
+ origset true
+ name Read2
+ xpos 290
+ ypos -135
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/transmittance.exr
+ format "256 64 0 0 256 64 1 "
+ origset true
+ version 25
+ name Read8
+ xpos 290
+ ypos 45
+}
+Read {
+ inputs 0
+ file_type exr
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/scattering.exr
  format "8192 128 0 0 8192 128 1 "
  origset true
- version 38
+ version 39
  name Read6
  xpos 510
  ypos 45
@@ -155,14 +176,16 @@ Merge2 {
  xpos 400
  ypos 303
 }
+push $N655ed800
 Read {
  inputs 0
  file_type exr
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/irradiance.exr
  format "64 16 0 0 64 16 1 "
  origset true
- version 70
+ version 71
  name Read5
+ selected true
  xpos 918
  ypos 81
 }
@@ -225,28 +248,6 @@ Merge2 {
  xpos 840
  ypos 327
 }
-Read {
- inputs 0
- file_type exr
- file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/helios_cache/luts_backup_working/transmittance.exr
- format "256 64 0 0 256 64 1 "
- origset true
- name Read2
- xpos 290
- ypos -135
-}
-push $N655ed800
-Read {
- inputs 0
- file_type exr
- file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/transmittance.exr
- format "256 64 0 0 256 64 1 "
- origset true
- version 25
- name Read8
- xpos 290
- ypos 45
-}
 Viewer {
  inputs 2
  frame 10
@@ -256,7 +257,6 @@ Viewer {
    }
  monitorOutOutputTransform rec709
  name Viewer1
- selected true
  xpos -40
  ypos -9
 }
