@@ -25,10 +25,24 @@ class HELIOS_OT_precompute_luts(Operator):
         
         settings = context.scene.helios
         
-        # Clear sky shader before baking to prevent Cycles from competing for GPU
-        # This dramatically speeds up the bake when a Helios world exists
+        # Clear sky shader AND switch viewport to SOLID before baking
+        # This prevents Cycles from competing for GPU resources
         world = context.scene.world
         had_helios_world = False
+        previous_shading_types = []
+        
+        # Switch all rendered viewports to SOLID mode
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    for space in area.spaces:
+                        if space.type == 'VIEW_3D' and space.shading.type == 'RENDERED':
+                            previous_shading_types.append((space, 'RENDERED'))
+                            space.shading.type = 'SOLID'
+        
+        if previous_shading_types:
+            print(f"Helios: Switched {len(previous_shading_types)} viewport(s) to SOLID for faster baking")
+        
         if world and world.use_nodes and world.get("is_helios"):
             had_helios_world = True
             world.node_tree.nodes.clear()
@@ -110,8 +124,13 @@ class HELIOS_OT_precompute_luts(Operator):
                     world.node_tree.links,
                     settings
                 )
-                world_module._force_viewport_update(context, world)
                 print("Helios: Rebuilt sky shader with fresh LUTs")
+            
+            # Restore viewport shading modes
+            for space, shading_type in previous_shading_types:
+                space.shading.type = shading_type
+            if previous_shading_types:
+                print(f"Helios: Restored {len(previous_shading_types)} viewport(s) to RENDERED")
             
         except Exception as e:
             self.report({'ERROR'}, f"Precomputation failed: {str(e)}")
@@ -123,6 +142,9 @@ class HELIOS_OT_precompute_luts(Operator):
                     world.node_tree.links,
                     settings
                 )
+            # Restore viewport shading modes on error too
+            for space, shading_type in previous_shading_types:
+                space.shading.type = shading_type
             return {'CANCELLED'}
         finally:
             context.window_manager.progress_end()
