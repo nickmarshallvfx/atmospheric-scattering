@@ -2046,6 +2046,12 @@ class BlenderGPUAtmosphereModelV2:
             # It's an AtmosphereParameters from the existing system
             self._external_params = params
             
+            # Debug: print incoming parameters
+            print(f"[Helios GPU v2] Incoming params:")
+            print(f"  rayleigh_scattering: {params.rayleigh_scattering[:3]}")
+            print(f"  mie_scattering: {params.mie_scattering[:3]}")
+            print(f"  ground_albedo: {params.ground_albedo}")
+            
             # Extract scale heights from density profiles
             # Density profile uses exp_scale = -1/scale_height
             rayleigh_scale_height = 8000.0  # Default
@@ -2082,6 +2088,14 @@ class BlenderGPUAtmosphereModelV2:
                 sun_angular_radius=params.sun_angular_radius,
                 ground_albedo=ground_albedo,
             )
+            
+            # Debug: print converted parameters
+            print(f"[Helios GPU v2] Converted params:")
+            print(f"  rayleigh_scattering: {self.params.rayleigh_scattering}")
+            print(f"  rayleigh_scale_height: {self.params.rayleigh_scale_height}")
+            print(f"  mie_scattering: {self.params.mie_scattering}")
+            print(f"  mie_scale_height: {self.params.mie_scale_height}")
+            print(f"  ground_albedo: {self.params.ground_albedo}")
         else:
             self.params = params
             self._external_params = None

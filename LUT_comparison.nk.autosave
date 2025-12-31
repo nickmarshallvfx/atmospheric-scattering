@@ -11,7 +11,7 @@ define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
             <split size="1257" stretch="1"/>
             <splitter orientation="2">
                 <split size="638"/>
-                <dock id="" activePageId="Viewer.1" focus="true">
+                <dock id="" activePageId="Viewer.1">
                     <page id="Viewer.1"/>
                 </dock>
                 <split size="449"/>
@@ -94,7 +94,7 @@ Read {
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/irradiance.exr
  format "64 16 0 0 64 16 1 "
  origset true
- version 72
+ version 73
  name Read5
  xpos 918
  ypos 81
@@ -164,7 +164,7 @@ Read {
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/scattering.exr
  format "8192 128 0 0 8192 128 1 "
  origset true
- version 40
+ version 44
  name Read6
  selected true
  xpos 510
@@ -210,7 +210,7 @@ Read {
  origset true
  version 1
  name Read3
- xpos 432
+ xpos 435
  ypos -183
 }
 Shuffle2 {
