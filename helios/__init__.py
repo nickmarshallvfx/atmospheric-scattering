@@ -56,7 +56,7 @@ def _update_preview_invalidate(self, context):
     # Mark LUTs as invalid
     settings.luts_valid = False
     
-    # Auto-recompute LUTs (this is fast with vectorized code)
+    # Auto-recompute LUTs using GPU (fast ~5 seconds)
     try:
         # Get LUT cache directory
         lut_dir = world_module.get_lut_cache_dir()
@@ -64,9 +64,12 @@ def _update_preview_invalidate(self, context):
         # Create atmosphere parameters from current settings
         params = core.parameters.AtmosphereParameters.from_blender_settings(settings)
         
-        # Precompute LUTs
+        # Precompute LUTs using GPU if available
         print("Helios: Auto-recomputing LUTs...")
-        model = core.model.AtmosphereModel(params)
+        if core.BLENDER_GPU_AVAILABLE:
+            model = core.BlenderGPUAtmosphereModel(params)
+        else:
+            model = core.model.AtmosphereModel(params)
         model.init()
         
         # Save LUTs as EXR files
