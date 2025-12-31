@@ -160,6 +160,16 @@ class HELIOS_PT_rendering_panel(Panel):
         
         settings = context.scene.helios
         
+        # Preview quality at the top - important for workflow
+        box = layout.box()
+        box.prop(settings, "preview_quality")
+        if settings.preview_quality == 'PREVIEW':
+            box.label(text="Preview: 2 orders (~3x faster)", icon='INFO')
+        else:
+            box.label(text="Final: 4 orders (full quality)", icon='CHECKMARK')
+        
+        layout.separator()
+        
         col = layout.column(align=True)
         col.prop(settings, "exposure")
         col.prop(settings, "white_balance")

@@ -44,19 +44,20 @@ def _update_preview(self, context):
     world.update_atmosphere_world(context)
 
 
-# Update callback that triggers LUT recomputation
-def _update_preview_invalidate(self, context):
-    """Update preview and trigger LUT recomputation for parameters baked into LUTs."""
+# Debounce timer for LUT recomputation
+_debounce_timer = None
+
+def _do_recompute_luts(context):
+    """Actually perform the LUT recomputation (called after debounce delay)."""
     from . import core
     from . import world as world_module
     
     scene = context.scene
     settings = scene.helios
     
-    # Mark LUTs as invalid
-    settings.luts_valid = False
+    # Determine number of scattering orders based on quality setting
+    num_orders = 2 if settings.preview_quality == 'PREVIEW' else 4
     
-    # Auto-recompute LUTs using GPU (fast ~5 seconds)
     try:
         # Get LUT cache directory
         lut_dir = world_module.get_lut_cache_dir()
@@ -65,12 +66,12 @@ def _update_preview_invalidate(self, context):
         params = core.parameters.AtmosphereParameters.from_blender_settings(settings)
         
         # Precompute LUTs using GPU if available
-        print("Helios: Auto-recomputing LUTs...")
+        print(f"Helios: Auto-recomputing LUTs ({num_orders} orders)...")
         if core.BLENDER_GPU_AVAILABLE:
             model = core.BlenderGPUAtmosphereModel(params)
         else:
             model = core.model.AtmosphereModel(params)
-        model.init()
+        model.init(num_scattering_orders=num_orders)
         
         # Save LUTs as EXR files
         import os
@@ -97,9 +98,42 @@ def _update_preview_invalidate(self, context):
         print(f"Helios: Auto-recomputation failed: {e}")
         import traceback
         traceback.print_exc()
-        # Fall back to just updating preview with stale LUTs
     
-    # Update the world shader
+    return None  # Don't repeat timer
+
+
+# Update callback that triggers LUT recomputation
+def _update_preview_invalidate(self, context):
+    """Update preview and trigger LUT recomputation for parameters baked into LUTs."""
+    global _debounce_timer
+    import bpy
+    
+    scene = context.scene
+    settings = scene.helios
+    
+    # Mark LUTs as invalid
+    settings.luts_valid = False
+    
+    # Cancel any pending recompute
+    if _debounce_timer is not None:
+        try:
+            bpy.app.timers.unregister(_debounce_timer)
+        except:
+            pass
+        _debounce_timer = None
+    
+    # Schedule recompute after debounce delay (0.5 seconds)
+    # This prevents multiple rebakes when dragging sliders
+    def debounced_recompute():
+        global _debounce_timer
+        _debounce_timer = None
+        _do_recompute_luts(context)
+        return None
+    
+    _debounce_timer = debounced_recompute
+    bpy.app.timers.register(debounced_recompute, first_interval=0.5)
+    
+    # Update the world shader immediately (with stale LUTs for now)
     _update_preview(self, context)
 
 
@@ -169,6 +203,15 @@ class HeliosAtmosphereSettings(PropertyGroup):
             ('LATLONG', "Lat-Long", "Equirectangular panorama"),
         ],
         default='PERSPECTIVE',
+    )
+    preview_quality: EnumProperty(
+        name="Preview Quality",
+        description="LUT precomputation quality. Preview is faster but less accurate for multiple scattering",
+        items=[
+            ('PREVIEW', "Preview (2 orders)", "Fast preview with 2 scattering orders (~10s)"),
+            ('FINAL', "Final (4 orders)", "Full quality with 4 scattering orders (~40s)"),
+        ],
+        default='PREVIEW',
     )
     
     # Atmospheric Composition (Artistic Controls)

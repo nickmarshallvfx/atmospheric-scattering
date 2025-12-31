@@ -1922,6 +1922,7 @@ class GPUPrecomputeV2:
         """
         import time
         start_time = time.perf_counter()
+        step_times = {}
         
         print(f"[Helios GPU v2] Starting precomputation (orders 1-{num_scattering_orders})...")
         
@@ -1929,7 +1930,9 @@ class GPUPrecomputeV2:
             progress_callback(0.0, "Computing transmittance (GPU v2)...")
         
         # Step 1: Transmittance
+        t0 = time.perf_counter()
         transmittance = self.precompute_transmittance()
+        step_times['transmittance'] = time.perf_counter() - t0
         
         if progress_callback:
             progress_callback(0.1, "Computing single scattering (GPU v2)...")
@@ -1937,7 +1940,9 @@ class GPUPrecomputeV2:
         # Step 2: Single Scattering (order 1)
         # delta_rayleigh stores Rayleigh without phase function
         # delta_mie stores Mie without phase function
+        t0 = time.perf_counter()
         delta_rayleigh_mie, delta_mie = self.precompute_single_scattering(transmittance)
+        step_times['single_scattering'] = time.perf_counter() - t0
         
         # Initialize accumulated scattering with single scattering
         scattering = delta_rayleigh_mie.copy()
@@ -1946,13 +1951,17 @@ class GPUPrecomputeV2:
             progress_callback(0.2, "Computing direct irradiance (GPU v2)...")
         
         # Step 3: Direct Irradiance (used internally for scattering density)
+        t0 = time.perf_counter()
         delta_irradiance_direct = self.precompute_direct_irradiance(transmittance)
+        step_times['direct_irradiance'] = time.perf_counter() - t0
         
         if progress_callback:
             progress_callback(0.3, "Computing indirect irradiance order 1 (GPU v2)...")
         
         # Step 4: Indirect Irradiance from single scattering (order 1)
+        t0 = time.perf_counter()
         delta_irradiance = self.precompute_indirect_irradiance(delta_rayleigh_mie, delta_mie)
+        step_times['indirect_irradiance_1'] = time.perf_counter() - t0
         irradiance = delta_irradiance.copy()
         
         print(f"  [DEBUG] After order 1 - irradiance max: {irradiance.max():.6f}")
@@ -1972,6 +1981,7 @@ class GPUPrecomputeV2:
             # For scattering density:
             # - Order 2: uses single scattering + direct irradiance
             # - Order 3+: uses previous delta_multiple_scattering + previous delta_irradiance
+            t0 = time.perf_counter()
             if order == 2:
                 # Use direct irradiance for ground bounce
                 scattering_density = self.precompute_scattering_density(
@@ -1984,12 +1994,15 @@ class GPUPrecomputeV2:
                     order, delta_rayleigh_mie, delta_mie,
                     delta_multiple_scattering, delta_irradiance
                 )
+            step_times[f'scattering_density_{order}'] = time.perf_counter() - t0
             
             if progress_callback:
                 progress_callback(progress_base + 0.07, f"Computing multiple scattering order {order}...")
             
             # Compute delta multiple scattering (n-th order contribution)
+            t0 = time.perf_counter()
             delta_multiple_scattering = self.precompute_multiple_scattering(scattering_density)
+            step_times[f'multiple_scattering_{order}'] = time.perf_counter() - t0
             
             # Accumulate into scattering texture
             # Reference adds delta_multiple_scattering / RayleighPhase to make it phase-function-free
@@ -2001,9 +2014,11 @@ class GPUPrecomputeV2:
             
             # Compute indirect irradiance for this order
             # For order 2+, we integrate delta_multiple_scattering (no phase function)
+            t0 = time.perf_counter()
             delta_irradiance = self.precompute_indirect_irradiance(
                 delta_rayleigh_mie, delta_mie, order, delta_multiple_scattering
             )
+            step_times[f'indirect_irradiance_{order}'] = time.perf_counter() - t0
             
             # Accumulate into irradiance texture
             irradiance += delta_irradiance
@@ -2017,6 +2032,12 @@ class GPUPrecomputeV2:
         print(f"[Helios GPU v2] Complete in {total_time:.2f}s")
         print(f"  [DEBUG] Final scattering range: min={scattering[:,:,:,:3].min():.6f}, max={scattering[:,:,:,:3].max():.6f}")
         print(f"  [DEBUG] Final irradiance range: min={irradiance.min():.6f}, max={irradiance.max():.6f}")
+        
+        # Print timing breakdown
+        print(f"[Helios GPU v2] Timing breakdown:")
+        for step, t in step_times.items():
+            pct = 100 * t / total_time
+            print(f"  {step}: {t:.2f}s ({pct:.1f}%)")
         
         return PrecomputedTexturesV2(
             transmittance=transmittance,
