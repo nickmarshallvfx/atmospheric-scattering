@@ -6,9 +6,9 @@ APPROACH: Direct, faithful port of Bruneton reference_functions.glsl
 - Each step verified against reference before proceeding
 - Git commit at each verified milestone
 
-VERSION: 7 - Artistic controls (scale heights, scattering coefficients)
+VERSION: 8 - Preview mode with reduced sample counts for faster iteration
 """
-print("[Helios GPU v2] Module loaded - VERSION 7 (artistic controls)")
+print("[Helios GPU v2] Module loaded - VERSION 8 (preview mode optimization)")
 
 import os
 import numpy as np
@@ -910,12 +910,17 @@ void main() {
 # =============================================================================
 # SCATTERING DENSITY SHADER - First step of multiple scattering
 # =============================================================================
-def create_scattering_density_shader() -> 'gpu.types.GPUShader':
+def create_scattering_density_shader(sample_count: int = 16) -> 'gpu.types.GPUShader':
     """
     Create scattering density shader.
     
     Computes the radiance scattered at a point towards a direction,
     by integrating incident radiance from all directions.
+    
+    Args:
+        sample_count: Number of samples for hemisphere integration (default 16).
+                     Lower values are faster but less accurate.
+                     16 = full quality, 8 = preview (~4x faster)
     """
     shader_info = gpu.types.GPUShaderCreateInfo()
     
@@ -952,6 +957,7 @@ void main() {
 }
 ''')
     
+    # Use parameterized sample count for preview vs final quality
     shader_info.fragment_source('''
 #define PI 3.14159265358979323846
 #define TRANSMITTANCE_TEXTURE_WIDTH 256
@@ -965,7 +971,7 @@ void main() {
 #define SCATTERING_TEXTURE_DEPTH 32
 #define IRRADIANCE_TEXTURE_WIDTH 64
 #define IRRADIANCE_TEXTURE_HEIGHT 16
-#define SAMPLE_COUNT 16
+#define SAMPLE_COUNT ''' + str(sample_count) + '''
 
 float SafeSqrt(float x) { return sqrt(max(x, 0.0)); }
 float ClampCosine(float mu) { return clamp(mu, -1.0, 1.0); }
@@ -1806,13 +1812,17 @@ class GPUPrecomputeV2:
                                        delta_rayleigh: np.ndarray,
                                        delta_mie: np.ndarray,
                                        delta_multiple_scattering: np.ndarray,
-                                       delta_irradiance: np.ndarray) -> np.ndarray:
+                                       delta_irradiance: np.ndarray,
+                                       sample_count: int = 16) -> np.ndarray:
         """
         Compute scattering density for a given order.
         
         This is the first step of each multiple scattering iteration.
+        
+        Args:
+            sample_count: Hemisphere integration samples (16=full, 8=preview ~4x faster)
         """
-        print(f"[Helios GPU v2] Computing scattering density (order {scattering_order})...")
+        print(f"[Helios GPU v2] Computing scattering density (order {scattering_order}, samples={sample_count})...")
         
         # Create GPU textures
         single_rayleigh_tex = self._create_scattering_texture(delta_rayleigh)
@@ -1820,7 +1830,7 @@ class GPUPrecomputeV2:
         multiple_scattering_tex = self._create_scattering_texture(delta_multiple_scattering)
         irradiance_tex = self._create_irradiance_texture(delta_irradiance)
         
-        shader = create_scattering_density_shader()
+        shader = create_scattering_density_shader(sample_count)
         
         p = self.params
         import math
@@ -1914,17 +1924,26 @@ class GPUPrecomputeV2:
         return delta_multiple_scattering
     
     def precompute(self, num_scattering_orders: int = 4,
-                   progress_callback: Callable = None) -> PrecomputedTexturesV2:
+                   progress_callback: Callable = None,
+                   preview_mode: bool = False) -> PrecomputedTexturesV2:
         """
         Run full precomputation with multiple scattering.
         
         V2: Full Bruneton implementation with orders 1-4 scattering.
+        
+        Args:
+            num_scattering_orders: Number of scattering orders (2=preview, 4=final)
+            preview_mode: If True, use reduced sample counts for ~4x faster baking
         """
         import time
         start_time = time.perf_counter()
         step_times = {}
         
-        print(f"[Helios GPU v2] Starting precomputation (orders 1-{num_scattering_orders})...")
+        # Sample count: 16 for full quality, 8 for preview (~4x faster)
+        density_sample_count = 8 if preview_mode else 16
+        
+        quality_str = "PREVIEW" if preview_mode else "FINAL"
+        print(f"[Helios GPU v2] Starting precomputation ({quality_str}, orders 1-{num_scattering_orders}, samples={density_sample_count})...")
         
         if progress_callback:
             progress_callback(0.0, "Computing transmittance (GPU v2)...")
@@ -1986,13 +2005,15 @@ class GPUPrecomputeV2:
                 # Use direct irradiance for ground bounce
                 scattering_density = self.precompute_scattering_density(
                     order, delta_rayleigh_mie, delta_mie, 
-                    delta_multiple_scattering, delta_irradiance_direct
+                    delta_multiple_scattering, delta_irradiance_direct,
+                    sample_count=density_sample_count
                 )
             else:
                 # Use previous order's indirect irradiance
                 scattering_density = self.precompute_scattering_density(
                     order, delta_rayleigh_mie, delta_mie,
-                    delta_multiple_scattering, delta_irradiance
+                    delta_multiple_scattering, delta_irradiance,
+                    sample_count=density_sample_count
                 )
             step_times[f'scattering_density_{order}'] = time.perf_counter() - t0
             
@@ -2131,13 +2152,19 @@ class BlenderGPUAtmosphereModelV2:
     def is_initialized(self) -> bool:
         return self._is_initialized
     
-    def init(self, num_scattering_orders: int = 4, progress_callback=None) -> None:
-        """Precompute atmosphere LUTs using GPU."""
+    def init(self, num_scattering_orders: int = 4, progress_callback=None, preview_mode: bool = False) -> None:
+        """Precompute atmosphere LUTs using GPU.
+        
+        Args:
+            num_scattering_orders: Number of scattering orders (2=preview, 4=final)
+            preview_mode: If True, use reduced sample counts for faster preview
+        """
         # Run GPU precomputation with our fresh v2 engine
         gpu_precompute = GPUPrecomputeV2(self.params)
         self.textures = gpu_precompute.precompute(
             num_scattering_orders=num_scattering_orders,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
+            preview_mode=preview_mode
         )
         
         self._is_initialized = True

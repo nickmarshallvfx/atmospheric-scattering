@@ -55,8 +55,9 @@ def _do_recompute_luts(context):
     scene = context.scene
     settings = scene.helios
     
-    # Determine number of scattering orders based on quality setting
-    num_orders = 2 if settings.preview_quality == 'PREVIEW' else 4
+    # Determine quality based on preview setting
+    is_preview = settings.preview_quality == 'PREVIEW'
+    num_orders = 2 if is_preview else 4
     
     try:
         # Get LUT cache directory
@@ -66,12 +67,14 @@ def _do_recompute_luts(context):
         params = core.parameters.AtmosphereParameters.from_blender_settings(settings)
         
         # Precompute LUTs using GPU if available
-        print(f"Helios: Auto-recomputing LUTs ({num_orders} orders)...")
+        quality_str = "PREVIEW" if is_preview else "FINAL"
+        print(f"Helios: Auto-recomputing LUTs ({quality_str}, {num_orders} orders)...")
         if core.BLENDER_GPU_AVAILABLE:
             model = core.BlenderGPUAtmosphereModel(params)
+            model.init(num_scattering_orders=num_orders, preview_mode=is_preview)
         else:
             model = core.model.AtmosphereModel(params)
-        model.init(num_scattering_orders=num_orders)
+            model.init(num_scattering_orders=num_orders)
         
         # Save LUTs as EXR files
         import os
