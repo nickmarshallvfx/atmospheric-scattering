@@ -48,16 +48,8 @@ class HELIOS_OT_precompute_luts(Operator):
             world.node_tree.nodes.clear()
             print("Helios: Cleared sky shader for faster baking")
         
-        # Create parameters from UI settings
-        params = AtmosphereParameters.from_artistic_controls(
-            rayleigh_density_scale=settings.rayleigh_density,
-            mie_density_scale=settings.mie_density,
-            mie_phase_g=settings.mie_phase_g,
-            rayleigh_height=settings.rayleigh_scale_height,
-            mie_height=settings.mie_scale_height,
-            ground_albedo=settings.ground_albedo,
-            use_ozone=settings.use_ozone,
-        )
+        # Create parameters from UI settings (use from_blender_settings for all params)
+        params = AtmosphereParameters.from_blender_settings(settings)
         
         # Update planet parameters
         params.bottom_radius = settings.planet_radius * 1000.0  # km to m
