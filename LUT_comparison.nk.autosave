@@ -70,27 +70,6 @@ Read {
 Read {
  inputs 0
  file_type exr
- file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/helios_cache/luts_backup_working/transmittance.exr
- format "256 64 0 0 256 64 1 "
- origset true
- name Read2
- xpos 290
- ypos -135
-}
-Read {
- inputs 0
- file_type exr
- file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/transmittance.exr
- format "256 64 0 0 256 64 1 "
- origset true
- version 23
- name Read8
- xpos 290
- ypos 45
-}
-Read {
- inputs 0
- file_type exr
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/irradiance.exr
  format "64 16 0 0 64 16 1 "
  origset true
@@ -159,16 +138,14 @@ Merge2 {
  xpos 840
  ypos 327
 }
-push $N655b3000
 Read {
  inputs 0
  file_type exr
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/scattering.exr
  format "8192 128 0 0 8192 128 1 "
  origset true
- version 33
+ version 34
  name Read6
- selected true
  xpos 510
  ypos 45
 }
@@ -248,6 +225,28 @@ Merge2 {
  xpos 400
  ypos 303
 }
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/helios_cache/luts_backup_working/transmittance.exr
+ format "256 64 0 0 256 64 1 "
+ origset true
+ name Read2
+ xpos 290
+ ypos -135
+}
+push $N655b3000
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/transmittance.exr
+ format "256 64 0 0 256 64 1 "
+ origset true
+ version 25
+ name Read8
+ xpos 290
+ ypos 45
+}
 Viewer {
  inputs 2
  frame 10
@@ -257,6 +256,7 @@ Viewer {
    }
  monitorOutOutputTransform rec709
  name Viewer1
+ selected true
  xpos -40
  ypos -9
 }

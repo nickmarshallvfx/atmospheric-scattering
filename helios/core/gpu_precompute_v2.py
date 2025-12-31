@@ -6,9 +6,9 @@ APPROACH: Direct, faithful port of Bruneton reference_functions.glsl
 - Each step verified against reference before proceeding
 - Git commit at each verified milestone
 
-VERSION: 1 - Transmittance only (baseline)
+VERSION: 2 - Transmittance + Single Scattering
 """
-print("[Helios GPU v2] Module loaded - VERSION 1 (transmittance baseline)")
+print("[Helios GPU v2] Module loaded - VERSION 2 (transmittance + single scattering)")
 
 import os
 import numpy as np
@@ -267,6 +267,322 @@ void main() {
 
 
 # =============================================================================
+# SINGLE SCATTERING SHADER - Direct port of reference
+# =============================================================================
+def create_single_scattering_shader() -> 'gpu.types.GPUShader':
+    """
+    Create single scattering precomputation shader.
+    
+    Direct port of reference ComputeSingleScatteringTexture.
+    Renders one depth slice at a time (for 2D tiled texture output).
+    """
+    shader_info = gpu.types.GPUShaderCreateInfo()
+    
+    shader_info.vertex_in(0, 'VEC2', 'pos')
+    
+    vert_out = gpu.types.GPUStageInterfaceInfo("vert_iface")
+    vert_out.smooth('VEC2', 'uv')
+    shader_info.vertex_out(vert_out)
+    
+    # Push constants
+    shader_info.push_constant('FLOAT', 'bottom_radius')
+    shader_info.push_constant('FLOAT', 'top_radius')
+    shader_info.push_constant('FLOAT', 'mu_s_min')
+    shader_info.push_constant('INT', 'current_layer')
+    
+    # Transmittance texture sampler
+    shader_info.sampler(0, 'FLOAT_2D', 'transmittance_texture')
+    
+    shader_info.fragment_out(0, 'VEC4', 'fragColor')
+    
+    shader_info.vertex_source('''
+void main() {
+    uv = pos * 0.5 + 0.5;
+    gl_Position = vec4(pos, 0.0, 1.0);
+}
+''')
+    
+    # Fragment shader - DIRECT PORT of reference functions.glsl
+    shader_info.fragment_source('''
+#define TRANSMITTANCE_TEXTURE_WIDTH 256
+#define TRANSMITTANCE_TEXTURE_HEIGHT 64
+#define SCATTERING_TEXTURE_R_SIZE 32
+#define SCATTERING_TEXTURE_MU_SIZE 128
+#define SCATTERING_TEXTURE_MU_S_SIZE 32
+#define SCATTERING_TEXTURE_NU_SIZE 8
+#define SCATTERING_TEXTURE_WIDTH 256
+#define SCATTERING_TEXTURE_HEIGHT 128
+#define SAMPLE_COUNT 50
+
+// Atmosphere constants - hardcoded to match reference exactly
+const float rayleigh_scale_height = 8000.0;
+const float mie_scale_height = 1200.0;
+const float sun_angular_radius = 0.004675;
+
+// Scattering coefficients at RGB wavelengths (m^-1)
+const vec3 rayleigh_scattering = vec3(5.802e-6, 13.558e-6, 33.1e-6);
+const vec3 mie_scattering = vec3(4.0e-6, 4.0e-6, 4.0e-6);
+
+// Solar irradiance at RGB wavelengths
+const vec3 solar_irradiance = vec3(1.474, 1.8504, 1.91198);
+
+// =============================================================================
+// Utility functions - exact match to reference
+// =============================================================================
+
+float SafeSqrt(float x) {
+    return sqrt(max(x, 0.0));
+}
+
+float ClampCosine(float mu) {
+    return clamp(mu, -1.0, 1.0);
+}
+
+float ClampDistance(float d) {
+    return max(d, 0.0);
+}
+
+float ClampRadius(float r) {
+    return clamp(r, bottom_radius, top_radius);
+}
+
+float GetTextureCoordFromUnitRange(float x, float texture_size) {
+    return 0.5 / texture_size + x * (1.0 - 1.0 / texture_size);
+}
+
+float GetUnitRangeFromTextureCoord(float u, float texture_size) {
+    return (u - 0.5 / texture_size) / (1.0 - 1.0 / texture_size);
+}
+
+// Reference: DistanceToTopAtmosphereBoundary (line 207)
+float DistanceToTopAtmosphereBoundary(float r, float mu) {
+    float discriminant = r * r * (mu * mu - 1.0) + top_radius * top_radius;
+    return ClampDistance(-r * mu + SafeSqrt(discriminant));
+}
+
+// Reference: DistanceToBottomAtmosphereBoundary (line 222)
+float DistanceToBottomAtmosphereBoundary(float r, float mu) {
+    float discriminant = r * r * (mu * mu - 1.0) + bottom_radius * bottom_radius;
+    return ClampDistance(-r * mu - SafeSqrt(discriminant));
+}
+
+// Reference: RayIntersectsGround (line 240)
+bool RayIntersectsGround(float r, float mu) {
+    return mu < 0.0 && r * r * (mu * mu - 1.0) + bottom_radius * bottom_radius >= 0.0;
+}
+
+// =============================================================================
+// Density profiles - exact match to reference demo.cc
+// =============================================================================
+
+float GetRayleighDensity(float altitude) {
+    return clamp(exp(-altitude / rayleigh_scale_height), 0.0, 1.0);
+}
+
+float GetMieDensity(float altitude) {
+    return clamp(exp(-altitude / mie_scale_height), 0.0, 1.0);
+}
+
+// =============================================================================
+// Transmittance texture lookups - reference lines 460-519
+// =============================================================================
+
+vec3 GetTransmittanceToTopAtmosphereBoundary(float r, float mu) {
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    float d = DistanceToTopAtmosphereBoundary(r, mu);
+    float d_min = top_radius - r;
+    float d_max = rho + H;
+    float x_mu = (d - d_min) / (d_max - d_min);
+    float x_r = rho / H;
+    vec2 tex_uv = vec2(
+        GetTextureCoordFromUnitRange(x_mu, float(TRANSMITTANCE_TEXTURE_WIDTH)),
+        GetTextureCoordFromUnitRange(x_r, float(TRANSMITTANCE_TEXTURE_HEIGHT))
+    );
+    return texture(transmittance_texture, tex_uv).rgb;
+}
+
+// Reference: GetTransmittance (line 483-519)
+vec3 GetTransmittance(float r, float mu, float d, bool ray_r_mu_intersects_ground) {
+    float r_d = ClampRadius(sqrt(d * d + 2.0 * r * mu * d + r * r));
+    float mu_d = ClampCosine((r * mu + d) / r_d);
+    
+    if (ray_r_mu_intersects_ground) {
+        return min(
+            GetTransmittanceToTopAtmosphereBoundary(r_d, -mu_d) /
+            GetTransmittanceToTopAtmosphereBoundary(r, -mu),
+            vec3(1.0));
+    } else {
+        return min(
+            GetTransmittanceToTopAtmosphereBoundary(r, mu) /
+            GetTransmittanceToTopAtmosphereBoundary(r_d, mu_d),
+            vec3(1.0));
+    }
+}
+
+// Reference: GetTransmittanceToSun (line 552-563)
+vec3 GetTransmittanceToSun(float r, float mu_s) {
+    float sin_theta_h = bottom_radius / r;
+    float cos_theta_h = -sqrt(max(1.0 - sin_theta_h * sin_theta_h, 0.0));
+    return GetTransmittanceToTopAtmosphereBoundary(r, mu_s) *
+        smoothstep(-sin_theta_h * sun_angular_radius,
+                   sin_theta_h * sun_angular_radius,
+                   mu_s - cos_theta_h);
+}
+
+// =============================================================================
+// Single scattering computation - reference lines 650-730
+// =============================================================================
+
+// Reference: ComputeSingleScatteringIntegrand (line 650-668)
+void ComputeSingleScatteringIntegrand(
+    float r, float mu, float mu_s, float nu, float d,
+    bool ray_r_mu_intersects_ground,
+    out vec3 rayleigh, out vec3 mie) {
+    
+    float r_d = ClampRadius(sqrt(d * d + 2.0 * r * mu * d + r * r));
+    float mu_s_d = ClampCosine((r * mu_s + d * nu) / r_d);
+    
+    vec3 transmittance = 
+        GetTransmittance(r, mu, d, ray_r_mu_intersects_ground) *
+        GetTransmittanceToSun(r_d, mu_s_d);
+    
+    float altitude = r_d - bottom_radius;
+    rayleigh = transmittance * GetRayleighDensity(altitude);
+    mie = transmittance * GetMieDensity(altitude);
+}
+
+// Reference: ComputeSingleScattering (line 695-730)
+void ComputeSingleScattering(
+    float r, float mu, float mu_s, float nu,
+    bool ray_r_mu_intersects_ground,
+    out vec3 rayleigh, out vec3 mie) {
+    
+    // Distance to nearest atmosphere boundary
+    float dx;
+    if (ray_r_mu_intersects_ground) {
+        dx = DistanceToBottomAtmosphereBoundary(r, mu) / float(SAMPLE_COUNT);
+    } else {
+        dx = DistanceToTopAtmosphereBoundary(r, mu) / float(SAMPLE_COUNT);
+    }
+    
+    // Integration using trapezoidal rule
+    vec3 rayleigh_sum = vec3(0.0);
+    vec3 mie_sum = vec3(0.0);
+    
+    for (int i = 0; i <= SAMPLE_COUNT; ++i) {
+        float d_i = float(i) * dx;
+        vec3 rayleigh_i, mie_i;
+        ComputeSingleScatteringIntegrand(r, mu, mu_s, nu, d_i,
+            ray_r_mu_intersects_ground, rayleigh_i, mie_i);
+        float weight_i = (i == 0 || i == SAMPLE_COUNT) ? 0.5 : 1.0;
+        rayleigh_sum += rayleigh_i * weight_i;
+        mie_sum += mie_i * weight_i;
+    }
+    
+    // Reference line 727-729: multiply by dx, solar_irradiance, scattering coefficients
+    rayleigh = rayleigh_sum * dx * solar_irradiance * rayleigh_scattering;
+    mie = mie_sum * dx * solar_irradiance * mie_scattering;
+}
+
+// =============================================================================
+// Texture coordinate mapping - reference lines 837-926
+// =============================================================================
+
+// Reference: GetRMuMuSNuFromScatteringTextureUvwz (line 837-890)
+void GetRMuMuSNuFromScatteringTextureUvwz(
+    vec4 uvwz,
+    out float r, out float mu, out float mu_s, out float nu,
+    out bool ray_r_mu_intersects_ground) {
+    
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = H * GetUnitRangeFromTextureCoord(uvwz.w, float(SCATTERING_TEXTURE_R_SIZE));
+    r = sqrt(rho * rho + bottom_radius * bottom_radius);
+    
+    if (uvwz.z < 0.5) {
+        float d_min = r - bottom_radius;
+        float d_max = rho;
+        float d = d_min + (d_max - d_min) * GetUnitRangeFromTextureCoord(
+            1.0 - 2.0 * uvwz.z, float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
+        mu = (d == 0.0) ? -1.0 : ClampCosine(-(rho * rho + d * d) / (2.0 * r * d));
+        ray_r_mu_intersects_ground = true;
+    } else {
+        float d_min = top_radius - r;
+        float d_max = rho + H;
+        float d = d_min + (d_max - d_min) * GetUnitRangeFromTextureCoord(
+            2.0 * uvwz.z - 1.0, float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
+        mu = (d == 0.0) ? 1.0 : ClampCosine((H * H - rho * rho - d * d) / (2.0 * r * d));
+        ray_r_mu_intersects_ground = false;
+    }
+    
+    float x_mu_s = GetUnitRangeFromTextureCoord(uvwz.y, float(SCATTERING_TEXTURE_MU_S_SIZE));
+    float d_min = top_radius - bottom_radius;
+    float d_max = H;
+    float D = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s_min);
+    float A = (D - d_min) / (d_max - d_min);
+    float a = (A - x_mu_s * A) / (1.0 + x_mu_s * A);
+    float d = d_min + min(a, A) * (d_max - d_min);
+    mu_s = (d == 0.0) ? 1.0 : ClampCosine((H * H - d * d) / (2.0 * bottom_radius * d));
+    
+    nu = ClampCosine(uvwz.x * 2.0 - 1.0);
+}
+
+// Reference: GetRMuMuSNuFromScatteringTextureFragCoord (line 905-926)
+void GetRMuMuSNuFromScatteringTextureFragCoord(
+    vec3 frag_coord,
+    out float r, out float mu, out float mu_s, out float nu,
+    out bool ray_r_mu_intersects_ground) {
+    
+    vec4 SCATTERING_TEXTURE_SIZE = vec4(
+        float(SCATTERING_TEXTURE_NU_SIZE - 1),
+        float(SCATTERING_TEXTURE_MU_S_SIZE),
+        float(SCATTERING_TEXTURE_MU_SIZE),
+        float(SCATTERING_TEXTURE_R_SIZE));
+    
+    float frag_coord_nu = floor(frag_coord.x / float(SCATTERING_TEXTURE_MU_S_SIZE));
+    float frag_coord_mu_s = mod(frag_coord.x, float(SCATTERING_TEXTURE_MU_S_SIZE));
+    
+    vec4 uvwz = vec4(frag_coord_nu, frag_coord_mu_s, frag_coord.y, frag_coord.z) /
+                SCATTERING_TEXTURE_SIZE;
+    
+    GetRMuMuSNuFromScatteringTextureUvwz(uvwz, r, mu, mu_s, nu, ray_r_mu_intersects_ground);
+    
+    // Clamp nu to its valid range
+    nu = clamp(nu, mu * mu_s - sqrt((1.0 - mu * mu) * (1.0 - mu_s * mu_s)),
+                   mu * mu_s + sqrt((1.0 - mu * mu) * (1.0 - mu_s * mu_s)));
+}
+
+// =============================================================================
+// Main - compute single scattering for one texel
+// =============================================================================
+
+void main() {
+    // Convert 2D texture coords to 3D frag_coord
+    // x = [0, SCATTERING_TEXTURE_WIDTH), y = [0, SCATTERING_TEXTURE_HEIGHT), z = current_layer
+    vec3 frag_coord = vec3(
+        uv.x * float(SCATTERING_TEXTURE_WIDTH),
+        uv.y * float(SCATTERING_TEXTURE_HEIGHT),
+        float(current_layer) + 0.5
+    );
+    
+    float r, mu, mu_s, nu;
+    bool ray_r_mu_intersects_ground;
+    GetRMuMuSNuFromScatteringTextureFragCoord(frag_coord, r, mu, mu_s, nu,
+        ray_r_mu_intersects_ground);
+    
+    vec3 rayleigh, mie;
+    ComputeSingleScattering(r, mu, mu_s, nu, ray_r_mu_intersects_ground,
+        rayleigh, mie);
+    
+    // Pack Rayleigh RGB + Mie red channel in alpha (for single Mie extraction)
+    fragColor = vec4(rayleigh, mie.r);
+}
+''')
+    
+    return gpu.shader.create_from_info(shader_info)
+
+
+# =============================================================================
 # PRECOMPUTED TEXTURES CONTAINER
 # =============================================================================
 @dataclass
@@ -378,53 +694,132 @@ class GPUPrecomputeV2:
         
         return transmittance
     
+    def _create_transmittance_gpu_texture(self, transmittance: np.ndarray):
+        """Create GPU texture from transmittance data for use in other shaders."""
+        height, width = transmittance.shape[:2]
+        
+        # Pad to RGBA
+        rgba = np.zeros((height, width, 4), dtype=np.float32)
+        rgba[:, :, :3] = transmittance
+        rgba[:, :, 3] = 1.0
+        
+        # Create GPU texture
+        buf = gpu.types.Buffer('FLOAT', width * height * 4, rgba.flatten().tolist())
+        self._transmittance_texture = gpu.types.GPUTexture(
+            size=(width, height),
+            format='RGBA32F',
+            data=buf
+        )
+    
+    def precompute_single_scattering(self, transmittance: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Precompute single scattering LUT.
+        
+        Direct port of reference ComputeSingleScatteringTexture.
+        Returns (scattering, delta_mie) arrays.
+        """
+        print("[Helios GPU v2] Computing single scattering...")
+        
+        # Create GPU texture from transmittance
+        self._create_transmittance_gpu_texture(transmittance)
+        
+        shader = create_single_scattering_shader()
+        
+        p = self.params
+        
+        # mu_s_min from reference - cos(102 degrees) for half precision
+        import math
+        mu_s_min = math.cos(102.0 / 180.0 * math.pi)
+        
+        # Allocate output arrays
+        scattering = np.zeros((SCATTERING_TEXTURE_DEPTH, SCATTERING_TEXTURE_HEIGHT,
+                               SCATTERING_TEXTURE_WIDTH, 4), dtype=np.float32)
+        delta_mie = np.zeros((SCATTERING_TEXTURE_DEPTH, SCATTERING_TEXTURE_HEIGHT,
+                              SCATTERING_TEXTURE_WIDTH, 3), dtype=np.float32)
+        
+        # Render each depth slice
+        for layer in range(SCATTERING_TEXTURE_DEPTH):
+            uniforms = {
+                'bottom_radius': float(p.bottom_radius),
+                'top_radius': float(p.top_radius),
+                'mu_s_min': float(mu_s_min),
+                'current_layer': layer,
+            }
+            
+            pixels = self._render_to_texture(
+                shader,
+                SCATTERING_TEXTURE_WIDTH,
+                SCATTERING_TEXTURE_HEIGHT,
+                uniforms,
+                textures={'transmittance_texture': self._transmittance_texture}
+            )
+            
+            # Store: RGB = Rayleigh, A = Mie.r
+            scattering[layer] = pixels
+            
+            # Extract Mie from alpha and reconstruct full RGB
+            # Mie is wavelength-independent (same coefficient for RGB)
+            mie_r = pixels[:, :, 3]
+            delta_mie[layer, :, :, 0] = mie_r
+            delta_mie[layer, :, :, 1] = mie_r
+            delta_mie[layer, :, :, 2] = mie_r
+            
+            if layer == 0:
+                print(f"  [DEBUG] Layer 0 scattering range: min={pixels.min():.6f}, max={pixels.max():.6f}")
+                # Test pixel at same location as before
+                test_y, test_x = 96, 255
+                print(f"  [DEBUG] Test pixel [0, {test_y}, {test_x}]: {pixels[test_y, test_x, :]}")
+        
+        print(f"  [DEBUG] Scattering shape: {scattering.shape}")
+        print(f"  [DEBUG] Scattering range: min={scattering.min():.6f}, max={scattering.max():.6f}")
+        
+        return scattering, delta_mie
+    
     def precompute(self, num_scattering_orders: int = 4,
                    progress_callback: Callable = None) -> PrecomputedTexturesV2:
         """
         Run full precomputation.
         
-        Currently only transmittance is implemented for baseline verification.
-        Single scattering, irradiance, and multiple scattering will be added
-        after transmittance is verified to match reference.
+        V2: Transmittance + Single Scattering
         """
         import time
         start_time = time.perf_counter()
         
-        print("[Helios GPU v2] Starting precomputation (baseline version)...")
+        print("[Helios GPU v2] Starting precomputation...")
         
         if progress_callback:
             progress_callback(0.0, "Computing transmittance (GPU v2)...")
         
-        # Step 1: Transmittance (must verify before continuing)
+        # Step 1: Transmittance
         transmittance = self.precompute_transmittance()
         
         if progress_callback:
-            progress_callback(0.1, "Transmittance complete")
+            progress_callback(0.1, "Computing single scattering (GPU v2)...")
         
-        # TODO: Add single scattering after transmittance verified
+        # Step 2: Single Scattering
+        scattering, delta_mie = self.precompute_single_scattering(transmittance)
+        
+        if progress_callback:
+            progress_callback(0.5, "Single scattering complete")
+        
         # TODO: Add direct irradiance after single scattering verified
         # TODO: Add multiple scattering after direct irradiance verified
         
-        # For now, create placeholder arrays for other textures
-        # These will be zeros until we implement and verify each step
-        scattering = np.zeros((SCATTERING_TEXTURE_DEPTH, SCATTERING_TEXTURE_HEIGHT,
-                               SCATTERING_TEXTURE_WIDTH, 4), dtype=np.float32)
+        # Placeholder for irradiance until we implement it
         irradiance = np.zeros((IRRADIANCE_TEXTURE_HEIGHT, IRRADIANCE_TEXTURE_WIDTH, 3), 
                               dtype=np.float32)
-        single_mie = np.zeros((SCATTERING_TEXTURE_DEPTH, SCATTERING_TEXTURE_HEIGHT,
-                               SCATTERING_TEXTURE_WIDTH, 3), dtype=np.float32)
         
         if progress_callback:
-            progress_callback(1.0, "GPU v2 precomputation complete (transmittance only)")
+            progress_callback(1.0, "GPU v2 precomputation complete")
         
         total_time = time.perf_counter() - start_time
-        print(f"[Helios GPU v2] Complete in {total_time:.2f}s (transmittance only)")
+        print(f"[Helios GPU v2] Complete in {total_time:.2f}s")
         
         return PrecomputedTexturesV2(
             transmittance=transmittance,
             scattering=scattering,
             irradiance=irradiance,
-            single_mie_scattering=single_mie
+            single_mie_scattering=delta_mie
         )
 
 
