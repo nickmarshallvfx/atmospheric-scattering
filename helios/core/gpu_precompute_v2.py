@@ -6,9 +6,9 @@ APPROACH: Direct, faithful port of Bruneton reference_functions.glsl
 - Each step verified against reference before proceeding
 - Git commit at each verified milestone
 
-VERSION: 6 - Full multiple scattering (orders 1-4)
+VERSION: 7 - Artistic controls (scale heights, scattering coefficients)
 """
-print("[Helios GPU v2] Module loaded - VERSION 6 (full multiple scattering)")
+print("[Helios GPU v2] Module loaded - VERSION 7 (artistic controls)")
 
 import os
 import numpy as np
@@ -288,6 +288,12 @@ def create_single_scattering_shader() -> 'gpu.types.GPUShader':
     shader_info.push_constant('FLOAT', 'bottom_radius')
     shader_info.push_constant('FLOAT', 'top_radius')
     shader_info.push_constant('FLOAT', 'mu_s_min')
+    shader_info.push_constant('FLOAT', 'rayleigh_scale_height')
+    shader_info.push_constant('FLOAT', 'mie_scale_height')
+    shader_info.push_constant('VEC3', 'rayleigh_scattering')
+    shader_info.push_constant('VEC3', 'mie_scattering')
+    shader_info.push_constant('VEC3', 'solar_irradiance')
+    shader_info.push_constant('FLOAT', 'sun_angular_radius')
     shader_info.push_constant('INT', 'current_layer')
     
     # Transmittance texture sampler
@@ -314,17 +320,8 @@ void main() {
 #define SCATTERING_TEXTURE_HEIGHT 128
 #define SAMPLE_COUNT 50
 
-// Atmosphere constants - hardcoded to match reference exactly
-const float rayleigh_scale_height = 8000.0;
-const float mie_scale_height = 1200.0;
-const float sun_angular_radius = 0.004675;
-
-// Scattering coefficients at RGB wavelengths (m^-1)
-const vec3 rayleigh_scattering = vec3(5.802e-6, 13.558e-6, 33.1e-6);
-const vec3 mie_scattering = vec3(4.0e-6, 4.0e-6, 4.0e-6);
-
-// Solar irradiance at RGB wavelengths
-const vec3 solar_irradiance = vec3(1.474, 1.8504, 1.91198);
+// Note: rayleigh_scale_height, mie_scale_height, rayleigh_scattering, mie_scattering,
+// solar_irradiance, sun_angular_radius are now uniforms passed from Python
 
 // =============================================================================
 // Utility functions - exact match to reference
@@ -933,6 +930,8 @@ def create_scattering_density_shader() -> 'gpu.types.GPUShader':
     shader_info.push_constant('FLOAT', 'mu_s_min')
     shader_info.push_constant('FLOAT', 'mie_phase_g')
     shader_info.push_constant('FLOAT', 'ground_albedo')
+    shader_info.push_constant('FLOAT', 'rayleigh_scale_height')
+    shader_info.push_constant('FLOAT', 'mie_scale_height')
     shader_info.push_constant('VEC3', 'rayleigh_scattering')
     shader_info.push_constant('VEC3', 'mie_scattering')
     shader_info.push_constant('INT', 'scattering_order')
@@ -1004,14 +1003,14 @@ float MiePhaseFunction(float g, float nu) {
            ((2.0 + g2) * pow(1.0 + g2 - 2.0 * g * nu, 1.5));
 }
 
-// Rayleigh density at altitude
+// Rayleigh density at altitude (uses uniform scale height)
 float GetRayleighDensity(float altitude) {
-    return exp(-altitude / 8000.0);
+    return exp(-altitude / rayleigh_scale_height);
 }
 
-// Mie density at altitude
+// Mie density at altitude (uses uniform scale height)
 float GetMieDensity(float altitude) {
-    return exp(-altitude / 1200.0);
+    return exp(-altitude / mie_scale_height);
 }
 
 // Sample transmittance texture
@@ -1631,6 +1630,12 @@ class GPUPrecomputeV2:
                 'bottom_radius': float(p.bottom_radius),
                 'top_radius': float(p.top_radius),
                 'mu_s_min': float(mu_s_min),
+                'rayleigh_scale_height': float(p.rayleigh_scale_height),
+                'mie_scale_height': float(p.mie_scale_height),
+                'rayleigh_scattering': p.rayleigh_scattering,
+                'mie_scattering': p.mie_scattering,
+                'solar_irradiance': p.solar_irradiance,
+                'sun_angular_radius': float(p.sun_angular_radius),
                 'current_layer': layer,
             }
             
@@ -1833,6 +1838,8 @@ class GPUPrecomputeV2:
                 'mu_s_min': float(mu_s_min),
                 'mie_phase_g': float(p.mie_phase_g),
                 'ground_albedo': float(p.ground_albedo),
+                'rayleigh_scale_height': float(p.rayleigh_scale_height),
+                'mie_scale_height': float(p.mie_scale_height),
                 'rayleigh_scattering': p.rayleigh_scattering,
                 'mie_scattering': p.mie_scattering,
                 'scattering_order': scattering_order,
@@ -2038,20 +2045,42 @@ class BlenderGPUAtmosphereModelV2:
         elif hasattr(params, 'rayleigh_scattering'):
             # It's an AtmosphereParameters from the existing system
             self._external_params = params
+            
+            # Extract scale heights from density profiles
+            # Density profile uses exp_scale = -1/scale_height
+            rayleigh_scale_height = 8000.0  # Default
+            if params.rayleigh_density and len(params.rayleigh_density) > 0:
+                exp_scale = params.rayleigh_density[0].exp_scale
+                if exp_scale < 0:
+                    rayleigh_scale_height = -1.0 / exp_scale
+            
+            mie_scale_height = 1200.0  # Default
+            if params.mie_density and len(params.mie_density) > 0:
+                exp_scale = params.mie_density[0].exp_scale
+                if exp_scale < 0:
+                    mie_scale_height = -1.0 / exp_scale
+            
+            # Extract ground albedo
+            ground_albedo = 0.1
+            if hasattr(params.ground_albedo, '__len__'):
+                ground_albedo = float(params.ground_albedo[0])
+            else:
+                ground_albedo = float(params.ground_albedo)
+            
             # Convert to our internal AtmosphereParams
             self.params = AtmosphereParams(
                 bottom_radius=params.bottom_radius,
                 top_radius=params.top_radius,
                 rayleigh_scattering=tuple(params.rayleigh_scattering[:3]),
-                rayleigh_scale_height=8000.0,  # Default
+                rayleigh_scale_height=rayleigh_scale_height,
                 mie_scattering=tuple(params.mie_scattering[:3]),
                 mie_extinction=tuple(params.mie_extinction[:3]),
-                mie_scale_height=1200.0,  # Default
+                mie_scale_height=mie_scale_height,
                 mie_phase_g=params.mie_phase_function_g,
                 absorption_extinction=tuple(params.absorption_extinction[:3]),
                 solar_irradiance=(1.474, 1.8504, 1.91198),  # Default RGB
                 sun_angular_radius=params.sun_angular_radius,
-                ground_albedo=params.ground_albedo if isinstance(params.ground_albedo, float) else 0.1,
+                ground_albedo=ground_albedo,
             )
         else:
             self.params = params
