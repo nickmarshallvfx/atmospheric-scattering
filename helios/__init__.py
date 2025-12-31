@@ -51,28 +51,13 @@ def _do_recompute_luts(context):
     """Actually perform the LUT recomputation (called after debounce delay).
     
     Uses the operator for proper GPU context (timer callbacks have degraded GPU performance).
+    The operator handles clearing/rebuilding the sky shader for faster baking.
     """
-    from . import world as world_module
-    
     try:
         # Call the precompute operator - this has proper GPU context
-        # The operator reads preview_quality from settings automatically
+        # The operator clears sky shader before baking and rebuilds after
         print("Helios: Auto-recomputing LUTs via operator...")
         bpy.ops.helios.precompute_luts('EXEC_DEFAULT')
-        
-        # Force shader rebuild to refresh texture cache
-        world = context.scene.world
-        settings = context.scene.helios
-        if world and world.use_nodes and world.get("is_helios"):
-            # Clear nodes and rebuild to force texture reload
-            world.node_tree.nodes.clear()
-            world_module._build_sky_nodes(
-                world.node_tree.nodes,
-                world.node_tree.links,
-                settings
-            )
-            world_module._force_viewport_update(context, world)
-            print("Helios: Shader rebuilt with fresh textures")
         
     except Exception as e:
         print(f"Helios: Auto-recomputation failed: {e}")

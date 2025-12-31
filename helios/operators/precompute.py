@@ -18,11 +18,21 @@ class HELIOS_OT_precompute_luts(Operator):
         try:
             from ..core import AtmosphereModel, AtmosphereParameters
             from ..core import BLENDER_GPU_AVAILABLE, CUPY_AVAILABLE
+            from .. import world as world_module
         except ImportError as e:
             self.report({'ERROR'}, f"Failed to import core module: {e}")
             return {'CANCELLED'}
         
         settings = context.scene.helios
+        
+        # Clear sky shader before baking to prevent Cycles from competing for GPU
+        # This dramatically speeds up the bake when a Helios world exists
+        world = context.scene.world
+        had_helios_world = False
+        if world and world.use_nodes and world.get("is_helios"):
+            had_helios_world = True
+            world.node_tree.nodes.clear()
+            print("Helios: Cleared sky shader for faster baking")
         
         # Create parameters from UI settings
         params = AtmosphereParameters.from_artistic_controls(
@@ -93,9 +103,26 @@ class HELIOS_OT_precompute_luts(Operator):
             settings.luts_valid = True
             self.report({'INFO'}, f"Atmosphere LUTs saved to {lut_cache_dir}")
             
+            # Rebuild sky shader if it was cleared
+            if had_helios_world and world and world.use_nodes:
+                world_module._build_sky_nodes(
+                    world.node_tree.nodes,
+                    world.node_tree.links,
+                    settings
+                )
+                world_module._force_viewport_update(context, world)
+                print("Helios: Rebuilt sky shader with fresh LUTs")
+            
         except Exception as e:
             self.report({'ERROR'}, f"Precomputation failed: {str(e)}")
             settings.luts_valid = False
+            # Still try to rebuild shader on error
+            if had_helios_world and world and world.use_nodes:
+                world_module._build_sky_nodes(
+                    world.node_tree.nodes,
+                    world.node_tree.links,
+                    settings
+                )
             return {'CANCELLED'}
         finally:
             context.window_manager.progress_end()
