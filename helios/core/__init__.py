@@ -17,12 +17,18 @@ try:
     except ImportError:
         pass
     
-    # Try Blender GPU backend
+    # Try Blender GPU backend - USE V2 (fresh implementation)
     try:
-        from .gpu_precompute import BlenderGPUAtmosphereModel, GPUPrecompute
+        from .gpu_precompute_v2 import BlenderGPUAtmosphereModel, GPUPrecompute
         BLENDER_GPU_AVAILABLE = True
+        print("[Helios] Using GPU precompute V2 (fresh baseline)")
     except ImportError:
-        pass
+        # Fallback to v1 if v2 fails
+        try:
+            from .gpu_precompute import BlenderGPUAtmosphereModel, GPUPrecompute
+            BLENDER_GPU_AVAILABLE = True
+        except ImportError:
+            pass
         
 except ImportError as e:
     print(f"Helios Core: Import error (numpy may not be available): {e}")

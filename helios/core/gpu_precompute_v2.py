@@ -10,8 +10,9 @@ VERSION: 1 - Transmittance only (baseline)
 """
 print("[Helios GPU v2] Module loaded - VERSION 1 (transmittance baseline)")
 
+import os
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Callable
 from dataclasses import dataclass
 
 try:
@@ -266,23 +267,35 @@ void main() {
 
 
 # =============================================================================
-# GPU PRECOMPUTE MODEL
+# PRECOMPUTED TEXTURES CONTAINER
 # =============================================================================
-class GPUPrecomputeModelV2:
+@dataclass
+class PrecomputedTexturesV2:
+    """Container for precomputed LUT textures."""
+    transmittance: np.ndarray
+    scattering: Optional[np.ndarray] = None
+    irradiance: Optional[np.ndarray] = None
+    single_mie_scattering: Optional[np.ndarray] = None
+
+
+# =============================================================================
+# GPU PRECOMPUTE ENGINE
+# =============================================================================
+class GPUPrecomputeV2:
     """
-    Fresh GPU LUT precomputation - faithful to Bruneton reference.
+    Fresh GPU LUT precomputation engine - faithful to Bruneton reference.
     
     Each step is verified against reference before proceeding.
     """
     
-    def __init__(self, params: Optional[AtmosphereParams] = None):
-        self.params = params or AtmosphereParams()
+    def __init__(self, params: AtmosphereParams):
+        self.params = params
         self._transmittance_texture = None
-        self._is_initialized = False
     
     def _render_to_texture(self, shader: 'gpu.types.GPUShader',
                            width: int, height: int,
-                           uniforms: dict) -> np.ndarray:
+                           uniforms: dict,
+                           textures: dict = None) -> np.ndarray:
         """Render shader to offscreen buffer and read back pixels."""
         offscreen = gpu.types.GPUOffScreen(width, height, format='RGBA32F')
         
@@ -307,6 +320,13 @@ class GPUPrecomputeModelV2:
                         shader.uniform_float(name, value)
                 except (ValueError, TypeError):
                     pass
+            
+            if textures:
+                for name, tex in textures.items():
+                    try:
+                        shader.uniform_sampler(name, tex)
+                    except (ValueError, TypeError):
+                        pass
             
             batch.draw(shader)
         
@@ -339,7 +359,7 @@ class GPUPrecomputeModelV2:
             'absorption_extinction': p.absorption_extinction,
         }
         
-        print(f"  [DEBUG] Uniforms: bottom_radius={p.bottom_radius}, top_radius={p.top_radius}")
+        print(f"  [DEBUG] bottom_radius={p.bottom_radius}, top_radius={p.top_radius}")
         print(f"  [DEBUG] rayleigh_scattering={p.rayleigh_scattering}")
         print(f"  [DEBUG] mie_extinction={p.mie_extinction}")
         print(f"  [DEBUG] absorption_extinction={p.absorption_extinction}")
@@ -358,22 +378,181 @@ class GPUPrecomputeModelV2:
         
         return transmittance
     
-    def precompute(self, num_scattering_orders: int = 4) -> dict:
+    def precompute(self, num_scattering_orders: int = 4,
+                   progress_callback: Callable = None) -> PrecomputedTexturesV2:
         """
         Run full precomputation.
         
         Currently only transmittance is implemented for baseline verification.
+        Single scattering, irradiance, and multiple scattering will be added
+        after transmittance is verified to match reference.
         """
+        import time
+        start_time = time.perf_counter()
+        
         print("[Helios GPU v2] Starting precomputation (baseline version)...")
+        
+        if progress_callback:
+            progress_callback(0.0, "Computing transmittance (GPU v2)...")
         
         # Step 1: Transmittance (must verify before continuing)
         transmittance = self.precompute_transmittance()
         
-        self._is_initialized = True
+        if progress_callback:
+            progress_callback(0.1, "Transmittance complete")
         
+        # TODO: Add single scattering after transmittance verified
+        # TODO: Add direct irradiance after single scattering verified
+        # TODO: Add multiple scattering after direct irradiance verified
+        
+        # For now, create placeholder arrays for other textures
+        # These will be zeros until we implement and verify each step
+        scattering = np.zeros((SCATTERING_TEXTURE_DEPTH, SCATTERING_TEXTURE_HEIGHT,
+                               SCATTERING_TEXTURE_WIDTH, 4), dtype=np.float32)
+        irradiance = np.zeros((IRRADIANCE_TEXTURE_HEIGHT, IRRADIANCE_TEXTURE_WIDTH, 3), 
+                              dtype=np.float32)
+        single_mie = np.zeros((SCATTERING_TEXTURE_DEPTH, SCATTERING_TEXTURE_HEIGHT,
+                               SCATTERING_TEXTURE_WIDTH, 3), dtype=np.float32)
+        
+        if progress_callback:
+            progress_callback(1.0, "GPU v2 precomputation complete (transmittance only)")
+        
+        total_time = time.perf_counter() - start_time
+        print(f"[Helios GPU v2] Complete in {total_time:.2f}s (transmittance only)")
+        
+        return PrecomputedTexturesV2(
+            transmittance=transmittance,
+            scattering=scattering,
+            irradiance=irradiance,
+            single_mie_scattering=single_mie
+        )
+
+
+# =============================================================================
+# BLENDER GPU ATMOSPHERE MODEL V2 - Main interface for operator
+# =============================================================================
+class BlenderGPUAtmosphereModelV2:
+    """
+    Atmosphere model using Blender's built-in GPU for precomputation.
+    
+    Fresh implementation v2 - faithful port of Bruneton reference.
+    Drop-in replacement for BlenderGPUAtmosphereModel.
+    """
+    
+    def __init__(self, params=None):
+        # Accept either AtmosphereParams or the existing AtmosphereParameters
+        if params is None:
+            self.params = AtmosphereParams()
+            self._external_params = None
+        elif hasattr(params, 'rayleigh_scattering'):
+            # It's an AtmosphereParameters from the existing system
+            self._external_params = params
+            # Convert to our internal AtmosphereParams
+            self.params = AtmosphereParams(
+                bottom_radius=params.bottom_radius,
+                top_radius=params.top_radius,
+                rayleigh_scattering=tuple(params.rayleigh_scattering[:3]),
+                rayleigh_scale_height=8000.0,  # Default
+                mie_scattering=tuple(params.mie_scattering[:3]),
+                mie_extinction=tuple(params.mie_extinction[:3]),
+                mie_scale_height=1200.0,  # Default
+                mie_phase_g=params.mie_phase_function_g,
+                absorption_extinction=tuple(params.absorption_extinction[:3]),
+                solar_irradiance=(1.474, 1.8504, 1.91198),  # Default RGB
+                sun_angular_radius=params.sun_angular_radius,
+                ground_albedo=params.ground_albedo if isinstance(params.ground_albedo, float) else 0.1,
+            )
+        else:
+            self.params = params
+            self._external_params = None
+        
+        self.textures: Optional[PrecomputedTexturesV2] = None
+        self._is_initialized = False
+        self._solar_irradiance_rgb = np.array(self.params.solar_irradiance)
+        
+        print("[Helios] Using Blender GPU backend V2 (fresh implementation)")
+    
+    @property
+    def is_initialized(self) -> bool:
+        return self._is_initialized
+    
+    def init(self, num_scattering_orders: int = 4, progress_callback=None) -> None:
+        """Precompute atmosphere LUTs using GPU."""
+        # Run GPU precomputation with our fresh v2 engine
+        gpu_precompute = GPUPrecomputeV2(self.params)
+        self.textures = gpu_precompute.precompute(
+            num_scattering_orders=num_scattering_orders,
+            progress_callback=progress_callback
+        )
+        
+        self._is_initialized = True
+        print("[Helios GPU v2] Precomputation complete!")
+    
+    def get_shader_uniforms(self) -> dict:
+        """Get dictionary of uniform values for shaders."""
+        if not self._is_initialized:
+            raise RuntimeError("Model not initialized.")
+        
+        p = self.params
+        length_unit = 1000.0  # km
         return {
-            'transmittance': transmittance,
+            'bottom_radius': p.bottom_radius / length_unit,
+            'top_radius': p.top_radius / length_unit,
+            'rayleigh_scattering': tuple(x * length_unit for x in p.rayleigh_scattering),
+            'mie_scattering': tuple(x * length_unit for x in p.mie_scattering),
+            'mie_extinction': tuple(x * length_unit for x in p.mie_extinction),
+            'mie_phase_function_g': p.mie_phase_g,
+            'absorption_extinction': tuple(x * length_unit for x in p.absorption_extinction),
+            'ground_albedo': p.ground_albedo,
+            'sun_angular_radius': p.sun_angular_radius,
+            'solar_irradiance': self._solar_irradiance_rgb,
         }
+    
+    def save_textures(self, filepath: str) -> None:
+        """Save precomputed textures to NPZ file."""
+        if not self._is_initialized:
+            raise RuntimeError("Model not initialized.")
+        
+        np.savez_compressed(
+            filepath,
+            transmittance=self.textures.transmittance,
+            scattering=self.textures.scattering,
+            irradiance=self.textures.irradiance,
+            single_mie=self.textures.single_mie_scattering
+        )
+    
+    def save_textures_exr(self, output_dir: str) -> None:
+        """Save precomputed textures as EXR files."""
+        from .model import AtmosphereModel
+        
+        # Create a temporary model to use its EXR saving functionality
+        if self._external_params:
+            temp_model = AtmosphereModel(self._external_params)
+        else:
+            # Create minimal params for saving
+            from .parameters import AtmosphereParameters
+            temp_params = AtmosphereParameters.earth_default()
+            temp_model = AtmosphereModel(temp_params)
+        
+        # Create a compatible textures object
+        from .gpu_precompute import PrecomputedTextures
+        temp_model.textures = PrecomputedTextures(
+            transmittance=self.textures.transmittance,
+            scattering=self.textures.scattering,
+            irradiance=self.textures.irradiance,
+            single_mie_scattering=self.textures.single_mie_scattering
+        )
+        temp_model._is_initialized = True
+        temp_model._solar_irradiance_rgb = self._solar_irradiance_rgb
+        temp_model.save_textures_exr(output_dir)
+
+
+# =============================================================================
+# EXPORTS - Make v2 available as drop-in replacement
+# =============================================================================
+# Alias for compatibility - can switch back by changing this
+BlenderGPUAtmosphereModel = BlenderGPUAtmosphereModelV2
+GPUPrecompute = GPUPrecomputeV2
 
 
 # =============================================================================
@@ -385,16 +564,15 @@ def test_transmittance():
     print("TRANSMITTANCE BASELINE TEST")
     print("=" * 60)
     
-    model = GPUPrecomputeModelV2()
-    result = model.precompute()
+    model = BlenderGPUAtmosphereModelV2()
+    model.init(num_scattering_orders=4)
     
-    transmittance = result['transmittance']
+    transmittance = model.textures.transmittance
     
     print(f"\nTransmittance shape: {transmittance.shape}")
     print(f"Expected shape: ({TRANSMITTANCE_TEXTURE_HEIGHT}, {TRANSMITTANCE_TEXTURE_WIDTH}, 3)")
     
     # Load reference for comparison
-    import os
     ref_path = r"c:\Users\space\Documents\mattepaint\dev\atmospheric-scattering-4\cache\reference_transmittance.npy"
     if os.path.exists(ref_path):
         reference = np.load(ref_path)
