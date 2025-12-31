@@ -326,14 +326,24 @@ def _force_viewport_update(context, world):
     if hasattr(context, 'scene') and context.scene:
         context.scene.update_tag()
     
-    # Tag all 3D viewports for redraw
+    # Tag all 3D viewports for redraw and force shading mode toggle
+    # This is needed because Cycles caches world textures aggressively
     for window in context.window_manager.windows:
         for area in window.screen.areas:
             if area.type == 'VIEW_3D':
                 area.tag_redraw()
-                # Also tag the region for more aggressive redraw
                 for region in area.regions:
                     region.tag_redraw()
+                
+                # Force viewport refresh by briefly toggling shading mode
+                for space in area.spaces:
+                    if space.type == 'VIEW_3D':
+                        current_shading = space.shading.type
+                        if current_shading == 'RENDERED':
+                            # Toggle to SOLID and back to force texture cache invalidation
+                            space.shading.type = 'SOLID'
+                            space.shading.type = 'RENDERED'
+                            print("Helios: Toggled viewport shading to force texture reload")
 
 
 def update_atmosphere_world(context):
