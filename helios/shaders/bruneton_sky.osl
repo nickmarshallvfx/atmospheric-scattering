@@ -1,0 +1,569 @@
+/**
+ * Bruneton Atmospheric Scattering - Direct OSL Port
+ * 
+ * This is a direct port of Eric Bruneton's GLSL atmospheric scattering
+ * implementation to OSL (Open Shading Language) for Blender Cycles.
+ * 
+ * Copyright (c) 2017 Eric Bruneton (BSD License)
+ * Copyright (c) 2024 MattePaint - OSL Port
+ *
+ * This shader samples precomputed LUT textures to render physically accurate
+ * atmospheric scattering. The LUTs must be precomputed using the Python
+ * precomputation module before using this shader.
+ */
+
+// =============================================================================
+// TEXTURE SIZE CONSTANTS (must match precomputation)
+// =============================================================================
+
+#define TRANSMITTANCE_TEXTURE_WIDTH 256
+#define TRANSMITTANCE_TEXTURE_HEIGHT 64
+
+#define SCATTERING_TEXTURE_R_SIZE 32
+#define SCATTERING_TEXTURE_MU_SIZE 128
+#define SCATTERING_TEXTURE_MU_S_SIZE 32
+#define SCATTERING_TEXTURE_NU_SIZE 8
+
+#define SCATTERING_TEXTURE_WIDTH (SCATTERING_TEXTURE_NU_SIZE * SCATTERING_TEXTURE_MU_S_SIZE)
+#define SCATTERING_TEXTURE_HEIGHT SCATTERING_TEXTURE_MU_SIZE
+#define SCATTERING_TEXTURE_DEPTH SCATTERING_TEXTURE_R_SIZE
+
+#define IRRADIANCE_TEXTURE_WIDTH 64
+#define IRRADIANCE_TEXTURE_HEIGHT 16
+
+
+// =============================================================================
+// UTILITY FUNCTIONS
+// =============================================================================
+
+float ClampCosine(float mu) {
+    return clamp(mu, -1.0, 1.0);
+}
+
+float ClampDistance(float d) {
+    return max(d, 0.0);
+}
+
+float ClampRadius(float r, float bottom_radius, float top_radius) {
+    return clamp(r, bottom_radius, top_radius);
+}
+
+float SafeSqrt(float a) {
+    return sqrt(max(a, 0.0));
+}
+
+float GetTextureCoordFromUnitRange(float x, int texture_size) {
+    return 0.5 / texture_size + x * (1.0 - 1.0 / texture_size);
+}
+
+float GetUnitRangeFromTextureCoord(float u, int texture_size) {
+    return (u - 0.5 / texture_size) / (1.0 - 1.0 / texture_size);
+}
+
+
+// =============================================================================
+// ATMOSPHERE GEOMETRY
+// =============================================================================
+
+float DistanceToTopAtmosphereBoundary(float r, float mu, float top_radius) {
+    float discriminant = r * r * (mu * mu - 1.0) + top_radius * top_radius;
+    return ClampDistance(-r * mu + SafeSqrt(discriminant));
+}
+
+float DistanceToBottomAtmosphereBoundary(float r, float mu, float bottom_radius) {
+    float discriminant = r * r * (mu * mu - 1.0) + bottom_radius * bottom_radius;
+    return ClampDistance(-r * mu - SafeSqrt(discriminant));
+}
+
+int RayIntersectsGround(float r, float mu, float bottom_radius) {
+    return (mu < 0.0 && r * r * (mu * mu - 1.0) + 
+            bottom_radius * bottom_radius >= 0.0) ? 1 : 0;
+}
+
+
+// =============================================================================
+// PHASE FUNCTIONS
+// =============================================================================
+
+float RayleighPhaseFunction(float nu) {
+    float k = 3.0 / (16.0 * M_PI);
+    return k * (1.0 + nu * nu);
+}
+
+float MiePhaseFunction(float g, float nu) {
+    float k = 3.0 / (8.0 * M_PI) * (1.0 - g * g) / (2.0 + g * g);
+    return k * (1.0 + nu * nu) / pow(1.0 + g * g - 2.0 * g * nu, 1.5);
+}
+
+
+// =============================================================================
+// TRANSMITTANCE TEXTURE LOOKUP
+// =============================================================================
+
+void GetTransmittanceTextureUvFromRMu(
+    float r, float mu,
+    float bottom_radius, float top_radius,
+    output float u, output float v)
+{
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    float d = DistanceToTopAtmosphereBoundary(r, mu, top_radius);
+    float d_min = top_radius - r;
+    float d_max = rho + H;
+    float x_mu = (d - d_min) / (d_max - d_min);
+    float x_r = rho / H;
+    u = GetTextureCoordFromUnitRange(x_mu, TRANSMITTANCE_TEXTURE_WIDTH);
+    v = GetTextureCoordFromUnitRange(x_r, TRANSMITTANCE_TEXTURE_HEIGHT);
+}
+
+color GetTransmittanceToTopAtmosphereBoundary(
+    string transmittance_texture,
+    float r, float mu,
+    float bottom_radius, float top_radius)
+{
+    float u, v;
+    GetTransmittanceTextureUvFromRMu(r, mu, bottom_radius, top_radius, u, v);
+    return texture(transmittance_texture, u, v);
+}
+
+color GetTransmittance(
+    string transmittance_texture,
+    float r, float mu, float d,
+    int ray_r_mu_intersects_ground,
+    float bottom_radius, float top_radius)
+{
+    float r_d = ClampRadius(sqrt(d * d + 2.0 * r * mu * d + r * r), 
+                            bottom_radius, top_radius);
+    float mu_d = ClampCosine((r * mu + d) / r_d);
+
+    if (ray_r_mu_intersects_ground) {
+        color t1 = GetTransmittanceToTopAtmosphereBoundary(
+            transmittance_texture, r_d, -mu_d, bottom_radius, top_radius);
+        color t2 = GetTransmittanceToTopAtmosphereBoundary(
+            transmittance_texture, r, -mu, bottom_radius, top_radius);
+        return min(t1 / max(t2, color(1e-6)), color(1.0));
+    } else {
+        color t1 = GetTransmittanceToTopAtmosphereBoundary(
+            transmittance_texture, r, mu, bottom_radius, top_radius);
+        color t2 = GetTransmittanceToTopAtmosphereBoundary(
+            transmittance_texture, r_d, mu_d, bottom_radius, top_radius);
+        return min(t1 / max(t2, color(1e-6)), color(1.0));
+    }
+}
+
+
+// =============================================================================
+// SCATTERING TEXTURE LOOKUP
+// =============================================================================
+
+void GetScatteringTextureUvwzFromRMuMuSNu(
+    float r, float mu, float mu_s, float nu,
+    int ray_r_mu_intersects_ground,
+    float bottom_radius, float top_radius, float mu_s_min,
+    output float u_nu, output float u_mu_s, output float u_mu, output float u_r)
+{
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    u_r = GetTextureCoordFromUnitRange(rho / H, SCATTERING_TEXTURE_R_SIZE);
+
+    float r_mu = r * mu;
+    float discriminant = r_mu * r_mu - r * r + bottom_radius * bottom_radius;
+    
+    if (ray_r_mu_intersects_ground) {
+        float d = -r_mu - SafeSqrt(discriminant);
+        float d_min = r - bottom_radius;
+        float d_max = rho;
+        u_mu = 0.5 - 0.5 * GetTextureCoordFromUnitRange(
+            d_max == d_min ? 0.0 : (d - d_min) / (d_max - d_min), 
+            SCATTERING_TEXTURE_MU_SIZE / 2);
+    } else {
+        float d = -r_mu + SafeSqrt(discriminant + H * H);
+        float d_min = top_radius - r;
+        float d_max = rho + H;
+        u_mu = 0.5 + 0.5 * GetTextureCoordFromUnitRange(
+            (d - d_min) / (d_max - d_min), 
+            SCATTERING_TEXTURE_MU_SIZE / 2);
+    }
+
+    float d = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s, top_radius);
+    float d_min = top_radius - bottom_radius;
+    float d_max = H;
+    float a = (d - d_min) / (d_max - d_min);
+    float D = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s_min, top_radius);
+    float A = (D - d_min) / (d_max - d_min);
+    u_mu_s = GetTextureCoordFromUnitRange(
+        max(1.0 - a / A, 0.0) / (1.0 + a), SCATTERING_TEXTURE_MU_S_SIZE);
+
+    u_nu = (nu + 1.0) / 2.0;
+}
+
+color GetScatteringTiled2D(
+    string scattering_texture,
+    float u, float v, float w)
+{
+    // 3D texture stored as horizontally tiled 2D image
+    // Layout: depth slices placed side by side (W*D width, H height)
+    // w coordinate selects the depth slice
+    
+    int depth = SCATTERING_TEXTURE_DEPTH;
+    
+    // Clamp w to valid range and get slice indices for interpolation
+    float w_clamped = clamp(w, 0.0, 1.0);
+    float w_scaled = w_clamped * (depth - 1);
+    int slice0 = (int)floor(w_scaled);
+    int slice1 = min(slice0 + 1, depth - 1);
+    float w_frac = w_scaled - slice0;
+    
+    // Calculate U coordinate within tiled texture
+    // Each slice occupies 1/depth of the total width
+    float slice_width = 1.0 / depth;
+    
+    float u0 = (slice0 + u) * slice_width;
+    float u1 = (slice1 + u) * slice_width;
+    
+    // Sample both slices and interpolate
+    color c0 = texture(scattering_texture, u0, v);
+    color c1 = texture(scattering_texture, u1, v);
+    
+    return mix(c0, c1, w_frac);
+}
+
+color GetScattering(
+    string scattering_texture,
+    float r, float mu, float mu_s, float nu,
+    int ray_r_mu_intersects_ground,
+    float bottom_radius, float top_radius, float mu_s_min)
+{
+    float u_nu, u_mu_s, u_mu, u_r;
+    GetScatteringTextureUvwzFromRMuMuSNu(
+        r, mu, mu_s, nu, ray_r_mu_intersects_ground,
+        bottom_radius, top_radius, mu_s_min,
+        u_nu, u_mu_s, u_mu, u_r);
+    
+    float tex_coord_x = u_nu * (SCATTERING_TEXTURE_NU_SIZE - 1);
+    float tex_x = floor(tex_coord_x);
+    float lerp_factor = tex_coord_x - tex_x;
+    
+    float uvw0_x = (tex_x + u_mu_s) / SCATTERING_TEXTURE_NU_SIZE;
+    float uvw1_x = (tex_x + 1.0 + u_mu_s) / SCATTERING_TEXTURE_NU_SIZE;
+    
+    color s0 = GetScatteringTiled2D(scattering_texture, uvw0_x, u_mu, u_r);
+    color s1 = GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r);
+    
+    return s0 * (1.0 - lerp_factor) + s1 * lerp_factor;
+}
+
+
+// =============================================================================
+// COMBINED SCATTERING LOOKUP (for COMBINED_SCATTERING_TEXTURES mode)
+// =============================================================================
+
+color GetExtrapolatedSingleMieScattering(
+    color scattering_rgb, float scattering_a,
+    color rayleigh_scattering, color mie_scattering)
+{
+    if (scattering_rgb[0] <= 0.0) {
+        return color(0.0);
+    }
+    return scattering_rgb * scattering_a / scattering_rgb[0] *
+           (rayleigh_scattering[0] / mie_scattering[0]) *
+           (mie_scattering / rayleigh_scattering);
+}
+
+void GetCombinedScattering(
+    string scattering_texture,
+    string single_mie_scattering_texture,
+    float r, float mu, float mu_s, float nu,
+    int ray_r_mu_intersects_ground,
+    float bottom_radius, float top_radius, float mu_s_min,
+    color rayleigh_scattering, color mie_scattering,
+    int use_combined_textures,
+    output color scattering,
+    output color single_mie_scattering)
+{
+    float u_nu, u_mu_s, u_mu, u_r;
+    GetScatteringTextureUvwzFromRMuMuSNu(
+        r, mu, mu_s, nu, ray_r_mu_intersects_ground,
+        bottom_radius, top_radius, mu_s_min,
+        u_nu, u_mu_s, u_mu, u_r);
+    
+    float tex_coord_x = u_nu * (SCATTERING_TEXTURE_NU_SIZE - 1);
+    float tex_x = floor(tex_coord_x);
+    float lerp_factor = tex_coord_x - tex_x;
+    
+    float uvw0_x = (tex_x + u_mu_s) / SCATTERING_TEXTURE_NU_SIZE;
+    float uvw1_x = (tex_x + 1.0 + u_mu_s) / SCATTERING_TEXTURE_NU_SIZE;
+    
+    if (use_combined_textures) {
+        // Combined mode: RGB = Rayleigh + multiple, A = single Mie red
+        color s0 = GetScatteringTiled2D(scattering_texture, uvw0_x, u_mu, u_r);
+        color s1 = GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r);
+        color combined = s0 * (1.0 - lerp_factor) + s1 * lerp_factor;
+        
+        scattering = combined;
+        // For combined textures, alpha channel contains single mie red component
+        // In OSL we'd need a 4-channel texture; for now use separate texture
+        single_mie_scattering = GetExtrapolatedSingleMieScattering(
+            combined, combined[0], rayleigh_scattering, mie_scattering);
+    } else {
+        // Separate textures mode
+        scattering = GetScatteringTiled2D(scattering_texture, uvw0_x, u_mu, u_r) * (1.0 - lerp_factor) +
+                     GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+        single_mie_scattering = GetScatteringTiled2D(single_mie_scattering_texture, uvw0_x, u_mu, u_r) * (1.0 - lerp_factor) +
+                                GetScatteringTiled2D(single_mie_scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+    }
+}
+
+
+// =============================================================================
+// IRRADIANCE TEXTURE LOOKUP
+// =============================================================================
+
+color GetIrradiance(
+    string irradiance_texture,
+    float r, float mu_s,
+    float bottom_radius, float top_radius)
+{
+    float x_r = (r - bottom_radius) / (top_radius - bottom_radius);
+    float x_mu_s = mu_s * 0.5 + 0.5;
+    float u = GetTextureCoordFromUnitRange(x_mu_s, IRRADIANCE_TEXTURE_WIDTH);
+    float v = GetTextureCoordFromUnitRange(x_r, IRRADIANCE_TEXTURE_HEIGHT);
+    return texture(irradiance_texture, u, v);
+}
+
+
+// =============================================================================
+// SKY RADIANCE - Main rendering function
+// =============================================================================
+
+color GetSkyRadiance(
+    string transmittance_texture,
+    string scattering_texture,
+    string single_mie_scattering_texture,
+    point camera_in,
+    vector view_ray,
+    float shadow_length,
+    vector sun_direction,
+    float bottom_radius,
+    float top_radius,
+    float mu_s_min,
+    float mie_phase_g,
+    color rayleigh_scattering,
+    color mie_scattering,
+    int use_combined_textures,
+    output color transmittance)
+{
+    // Make local copy since we may need to modify camera position
+    point camera = camera_in;
+    
+    float r = length(camera);
+    float rmu = dot(camera, view_ray);
+    float distance_to_top = -rmu - sqrt(rmu * rmu - r * r + top_radius * top_radius);
+    
+    // If viewer is in space and ray intersects atmosphere, move to boundary
+    if (distance_to_top > 0.0) {
+        camera = camera + view_ray * distance_to_top;
+        r = top_radius;
+        rmu = rmu + distance_to_top;
+    } else if (r > top_radius) {
+        // Ray doesn't intersect atmosphere
+        transmittance = color(1.0);
+        return color(0.0);
+    }
+    
+    float mu = rmu / r;
+    float mu_s = dot(camera, sun_direction) / r;
+    float nu = dot(view_ray, sun_direction);
+    int ray_intersects_ground = RayIntersectsGround(r, mu, bottom_radius);
+    
+    transmittance = ray_intersects_ground ? color(0.0) :
+        GetTransmittanceToTopAtmosphereBoundary(
+            transmittance_texture, r, mu, bottom_radius, top_radius);
+    
+    color scattering_result;
+    color single_mie;
+    
+    if (shadow_length == 0.0) {
+        GetCombinedScattering(
+            scattering_texture, single_mie_scattering_texture,
+            r, mu, mu_s, nu, ray_intersects_ground,
+            bottom_radius, top_radius, mu_s_min,
+            rayleigh_scattering, mie_scattering,
+            use_combined_textures,
+            scattering_result, single_mie);
+    } else {
+        // Light shaft case
+        float d = shadow_length;
+        float r_p = ClampRadius(sqrt(d * d + 2.0 * r * mu * d + r * r),
+                                bottom_radius, top_radius);
+        float mu_p = (r * mu + d) / r_p;
+        float mu_s_p = (r * mu_s + d * nu) / r_p;
+        
+        GetCombinedScattering(
+            scattering_texture, single_mie_scattering_texture,
+            r_p, mu_p, mu_s_p, nu, ray_intersects_ground,
+            bottom_radius, top_radius, mu_s_min,
+            rayleigh_scattering, mie_scattering,
+            use_combined_textures,
+            scattering_result, single_mie);
+        
+        color shadow_transmittance = GetTransmittance(
+            transmittance_texture, r, mu, shadow_length,
+            ray_intersects_ground, bottom_radius, top_radius);
+        scattering_result = scattering_result * shadow_transmittance;
+        single_mie = single_mie * shadow_transmittance;
+    }
+    
+    return scattering_result * RayleighPhaseFunction(nu) + 
+           single_mie * MiePhaseFunction(mie_phase_g, nu);
+}
+
+
+// =============================================================================
+// MAIN SHADER
+// =============================================================================
+
+shader BrunetonSky(
+    // LUT Textures (file paths to precomputed EXR files)
+    string transmittance_texture = "",
+    string scattering_texture = "",
+    string single_mie_scattering_texture = "",
+    string irradiance_texture = "",
+    
+    // Atmosphere parameters (must match precomputation)
+    float bottom_radius = 6360.0,          // km (Earth radius)
+    float top_radius = 6420.0,             // km (atmosphere top)
+    float mu_s_min = -0.2,                 // cos(102 degrees)
+    
+    // Scattering coefficients (RGB for wavelengths)
+    color rayleigh_scattering = color(0.0058, 0.0135, 0.0331),
+    color mie_scattering = color(0.004),
+    float mie_phase_g = 0.8,
+    
+    // Sun parameters
+    vector sun_direction = vector(0, 0, 1),
+    float sun_angular_radius = 0.00467,    // radians (~0.27 degrees)
+    color solar_irradiance = color(1.474, 1.8504, 1.91198),
+    float sun_intensity = 1.0,             // Multiplier for solar irradiance
+    
+    // Camera (observer position relative to planet center, in km)
+    point camera_position = point(0, 0, 6360.5),  // 500m above sea level
+    
+    // Rendering options
+    float exposure = 10.0,
+    color white_point = color(1.0),
+    int use_combined_textures = 1,
+    int add_sun_disk = 1,
+    int debug_mode = 0,  // 0=normal, 1=view dir, 2=transmittance tex, 3=scattering tex, 4=raw scattering, 5=sun disk test
+    
+    // Outputs
+    output color Sky = color(0),
+    output color Transmittance = color(1),
+    output color Inscatter = color(0))
+{
+    // Get view direction from incoming ray (negated because I points toward surface)
+    vector view_ray = normalize(-I);
+    
+    // Debug mode 5: Sun disk test - bright white where sun should be
+    if (debug_mode == 5) {
+        float cos_sun_angle = dot(view_ray, normalize(sun_direction));
+        float sun_threshold = cos(sun_angular_radius);
+        if (cos_sun_angle > sun_threshold) {
+            Sky = color(1000.0);  // Very bright sun
+        } else if (cos_sun_angle > sun_threshold - 0.01) {
+            Sky = color(1.0, 0.5, 0.0);  // Orange ring around sun
+        } else {
+            Sky = color(0.1, 0.1, 0.3);  // Dark blue sky
+        }
+        return;
+    }
+    
+    // Debug mode 1: Output view direction as color (gradient sphere)
+    if (debug_mode == 1) {
+        Sky = color(view_ray[0] * 0.5 + 0.5, view_ray[1] * 0.5 + 0.5, view_ray[2] * 0.5 + 0.5);
+        return;
+    }
+    
+    // Debug mode 2: Sample transmittance texture directly
+    if (debug_mode == 2) {
+        float u = view_ray[0] * 0.5 + 0.5;
+        float v = view_ray[2] * 0.5 + 0.5;
+        Sky = texture(transmittance_texture, u, v);
+        return;
+    }
+    
+    // Debug mode 3: Sample scattering texture directly  
+    if (debug_mode == 3) {
+        float u = view_ray[0] * 0.5 + 0.5;
+        float v = view_ray[2] * 0.5 + 0.5;
+        Sky = texture(scattering_texture, u * 0.03125, v);  // First slice only
+        return;
+    }
+    
+    // Camera position (in km, relative to planet center)
+    point cam = camera_position;
+    
+    // Compute sky radiance using precomputed LUTs
+    color transmittance_out;
+    color radiance = GetSkyRadiance(
+        transmittance_texture,
+        scattering_texture,
+        single_mie_scattering_texture,
+        cam,
+        view_ray,
+        0.0,  // shadow_length
+        normalize(sun_direction),
+        bottom_radius,
+        top_radius,
+        mu_s_min,
+        mie_phase_g,
+        rayleigh_scattering,
+        mie_scattering,
+        use_combined_textures,
+        transmittance_out);
+    
+    // Apply sun intensity multiplier to radiance
+    radiance = radiance * sun_intensity;
+    
+    // Add sun disk if ray points at sun
+    if (add_sun_disk) {
+        float cos_sun_angle = dot(view_ray, normalize(sun_direction));
+        if (cos_sun_angle > cos(sun_angular_radius)) {
+            // Inside sun disk - add solar radiance attenuated by transmittance
+            // Solar radiance = solar_irradiance / (solid angle of sun disk)
+            // Solid angle = PI * sun_angular_radius^2
+            color sun_radiance = solar_irradiance / (M_PI * sun_angular_radius * sun_angular_radius);
+            radiance = radiance + transmittance_out * sun_radiance * sun_intensity;
+        }
+    }
+    
+    // Debug mode 4: Raw scattering values (no tone mapping)
+    if (debug_mode == 4) {
+        Sky = radiance;
+        return;
+    }
+    
+    // Debug mode 6: Show sun disk radiance values (bypass transmittance issue)
+    if (debug_mode == 6) {
+        float cos_sun_angle = dot(view_ray, normalize(sun_direction));
+        if (cos_sun_angle > cos(sun_angular_radius)) {
+            // Show raw sun radiance (should be very bright ~10000+)
+            color sun_radiance = solar_irradiance / (M_PI * sun_angular_radius * sun_angular_radius);
+            // Scale down for visualization: divide by 10000 so values around 1.0 are visible
+            Sky = sun_radiance / 10000.0;
+        } else {
+            // Show transmittance in sky area (should be close to 1.0 for clear sky)
+            Sky = transmittance_out;
+        }
+        return;
+    }
+    
+    // Store outputs
+    Inscatter = radiance;
+    Transmittance = transmittance_out;
+    
+    // Output RAW HDR radiance to Background shader
+    // Cycles needs unbounded values for proper sun sampling and shadow casting
+    // Display tone mapping is handled by Blender's View Transform (e.g., Filmic, AgX)
+    Sky = radiance * exposure;
+}

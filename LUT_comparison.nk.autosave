@@ -1,0 +1,262 @@
+#! C:/Program Files/Nuke13.2v7/nuke-13.2.7.dll -nx
+version 13.2 v7
+define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
+<layout version="1.0">
+    <window x="-1" y="-8" w="1920" h="1129" maximized="1" screen="0">
+        <splitter orientation="1">
+            <split size="40"/>
+            <dock id="" hideTitles="1" activePageId="Toolbar.1">
+                <page id="Toolbar.1"/>
+            </dock>
+            <split size="1257" stretch="1"/>
+            <splitter orientation="2">
+                <split size="638"/>
+                <dock id="" activePageId="Viewer.1">
+                    <page id="Viewer.1"/>
+                </dock>
+                <split size="449"/>
+                <dock id="" activePageId="DAG.1">
+                    <page id="DAG.1"/>
+                    <page id="Curve Editor.1"/>
+                    <page id="DopeSheet.1"/>
+                </dock>
+            </splitter>
+            <split size="615"/>
+            <dock id="" activePageId="Properties.1">
+                <page id="Properties.1"/>
+                <page id="uk.co.thefoundry.backgroundrenderview.1"/>
+            </dock>
+        </splitter>
+    </window>
+</layout>
+}
+Root {
+ inputs 0
+ name C:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/LUT_comparison.nk
+ frame 10
+ format "2048 1556 0 0 2048 1556 1 2K_Super_35(full-ap)"
+ proxy_type scale
+ proxy_format "1024 778 0 0 1024 778 1 1K_Super_35(full-ap)"
+ colorManagement Nuke
+ workingSpaceLUT linear
+ monitorLut sRGB
+ monitorOutLUT rec709
+ int8Lut sRGB
+ int16Lut sRGB
+ logLut Cineon
+ floatLut linear
+}
+Read {
+ inputs 0
+ file_type exr
+ file C:/Users/space/AppData/Local/Temp/helios_position.exr
+ format "1920 1080 0 0 1920 1080 1 HD_1080"
+ origset true
+ name Read1
+ xpos -119
+ ypos -140
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/single_mie_scattering.exr
+ format "8192 128 0 0 8192 128 1 "
+ origset true
+ version 10
+ name Read7
+ xpos 400
+ ypos 57
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/helios_cache/luts_backup_working/transmittance.exr
+ format "256 64 0 0 256 64 1 "
+ origset true
+ name Read2
+ xpos 290
+ ypos -135
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/transmittance.exr
+ format "256 64 0 0 256 64 1 "
+ origset true
+ version 23
+ name Read8
+ xpos 290
+ ypos 45
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/irradiance.exr
+ format "64 16 0 0 64 16 1 "
+ origset true
+ version 66
+ name Read5
+ xpos 918
+ ypos 81
+}
+set N655b3000 [stack 0]
+Shuffle2 {
+ fromInput1 {{0} B}
+ fromInput2 {{0} B}
+ mappings "4 rgba.red 0 0 rgba.red 0 0 rgba.green 0 1 rgba.green 0 1 rgba.blue 0 2 rgba.blue 0 2 white -1 -1 rgba.alpha 0 3"
+ name Shuffle3
+ xpos 918
+ ypos 165
+}
+Crop {
+ box {0 0 64 16}
+ name Crop6
+ xpos 918
+ ypos 189
+}
+push 0
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/helios_cache/luts_backup_working/irradiance.exr
+ format "64 16 0 0 64 16 1 "
+ origset true
+ name Read4
+ xpos 558
+ ypos -135
+}
+Shuffle2 {
+ fromInput1 {{0} B}
+ fromInput2 {{0} B}
+ mappings "4 rgba.red 0 0 rgba.red 0 0 rgba.green 0 1 rgba.green 0 1 rgba.blue 0 2 rgba.blue 0 2 white -1 -1 rgba.alpha 0 3"
+ name Shuffle4
+ xpos 558
+ ypos -33
+}
+Crop {
+ box {0 0 64 16}
+ name Crop5
+ xpos 558
+ ypos -9
+}
+Transform {
+ translate {0 16}
+ center {32 8}
+ name Transform2
+ xpos 558
+ ypos 15
+}
+Reformat {
+ inputs 0
+ format "64 32 0 0 64 32 1 irradiance_compare"
+ name Reformat2
+ xpos 730
+ ypos 249
+}
+Merge2 {
+ inputs 3+1
+ name Merge2
+ xpos 840
+ ypos 327
+}
+push $N655b3000
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/scattering.exr
+ format "8192 128 0 0 8192 128 1 "
+ origset true
+ version 33
+ name Read6
+ selected true
+ xpos 510
+ ypos 45
+}
+Shuffle2 {
+ fromInput1 {{0} B}
+ fromInput2 {{0} B}
+ mappings "4 rgba.red 0 0 rgba.red 0 0 rgba.green 0 1 rgba.green 0 1 rgba.blue 0 2 rgba.blue 0 2 white -1 -1 rgba.alpha 0 3"
+ name Shuffle1
+ xpos 510
+ ypos 135
+}
+Crop {
+ box {7104 0 7136 128}
+ reformat true
+ crop false
+ name Crop2
+ xpos 510
+ ypos 183
+}
+Crop {
+ box {0 0 32 128}
+ name Crop4
+ xpos 510
+ ypos 207
+}
+Transform {
+ translate {32 0}
+ center {16 64}
+ name Transform1
+ xpos 510
+ ypos 231
+}
+push 0
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/helios_cache/luts_backup_working/scattering.exr
+ format "8192 128 0 0 8192 128 1 "
+ origset true
+ version 1
+ name Read3
+ xpos 432
+ ypos -183
+}
+Shuffle2 {
+ fromInput1 {{0} B}
+ fromInput2 {{0} B}
+ mappings "4 rgba.red 0 0 rgba.red 0 0 rgba.green 0 1 rgba.green 0 1 rgba.blue 0 2 rgba.blue 0 2 white -1 -1 rgba.alpha 0 3"
+ name Shuffle2
+ xpos 435
+ ypos -81
+}
+Crop {
+ box {7104 0 7136 128}
+ reformat true
+ crop false
+ name Crop1
+ xpos 432
+ ypos -51
+}
+Crop {
+ box {0 0 32 128}
+ name Crop3
+ xpos 432
+ ypos -27
+}
+Reformat {
+ inputs 0
+ format "64 128 0 0 64 128 1 single_scatter_slice"
+ name Reformat1
+ xpos 253
+ ypos 160
+}
+Merge2 {
+ inputs 3+1
+ name Merge1
+ xpos 400
+ ypos 303
+}
+Viewer {
+ inputs 2
+ frame 10
+ frame_range 1-100
+ colour_sample_bbox {1.125 0.125 1.15625 0.15625}
+ samplepoints {{1.125 0.125}
+   }
+ monitorOutOutputTransform rec709
+ name Viewer1
+ xpos -40
+ ypos -9
+}

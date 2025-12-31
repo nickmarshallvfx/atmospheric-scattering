@@ -1,0 +1,2922 @@
+OpenShadingLanguage 1.00
+# Compiled by oslc 1.14.7.0
+# options: -o C:\Users\space\AppData\Local\Temp\tmp2zssiz_s.oso -IC:\Program Files\Blender Foundation\Blender 5.0\5.0\scripts\addons_core\cycles\shader
+shader BrunetonSky
+param	string	transmittance_texture	""		%read{37,1036} %write{2147483647,-1}
+param	string	scattering_texture	""		%read{48,750} %write{2147483647,-1}
+param	string	single_mie_scattering_texture	""		%read{437,806} %write{2147483647,-1}
+param	string	irradiance_texture	""		%read{2147483647,-1} %write{2147483647,-1}
+param	float	bottom_radius	6360		%read{87,994} %write{2147483647,-1} %derivs
+param	float	top_radius	6420		%read{60,1014} %write{2147483647,-1} %derivs
+param	float	mu_s_min	-0.200000003		%read{245,591} %write{2147483647,-1} %derivs
+param	color	rayleigh_scattering	0.00579999993 0.0135000004 0.0331000015		%read{352,696} %write{2147483647,-1}
+param	color	mie_scattering	0.00400000019 0.00400000019 0.00400000019		%read{353,696} %write{2147483647,-1}
+param	float	mie_phase_g	0.800000012		%read{1050,1061} %write{2147483647,-1}
+param	vector	sun_direction	0 0 1		%read{4,1088} %write{2147483647,-1} %derivs
+param	float	sun_angular_radius	0.00467000017		%read{6,1094} %write{2147483647,-1}
+param	color	solar_irradiance	1.47399998 1.85039997 1.91198003		%read{1078,1095} %write{2147483647,-1}
+param	float	sun_intensity	1		%read{1069,1080} %write{2147483647,-1}
+param	point	camera_position	0 0 6360.5		%read{50,50} %write{2147483647,-1} %derivs
+param	float	exposure	10		%read{1101,1101} %write{2147483647,-1}
+param	color	white_point	1 1 1		%read{2147483647,-1} %write{2147483647,-1}
+param	int	use_combined_textures	1		%read{284,624} %write{2147483647,-1}
+param	int	add_sun_disk	1		%read{1070,1070} %write{2147483647,-1}
+param	int	debug_mode	0		%read{2,1086} %write{2147483647,-1}
+oparam	color	Sky	0 0 0		%read{2147483647,-1} %write{9,1101}
+oparam	color	Transmittance	1 1 1		%read{2147483647,-1} %write{1100,1100}
+oparam	color	Inscatter	0 0 0		%read{2147483647,-1} %write{1099,1099}
+global	vector	I	%read{0,0} %write{2147483647,-1} %derivs
+local	float	___374_discriminant	%read{120,1009} %write{116,1005} %derivs
+local	float	___377_k	%read{1047,1047} %write{1044,1044}
+local	float	___378_k	%read{1058,1058} %write{1055,1055}
+local	float	___379_H	%read{126,1019} %write{103,992} %derivs
+local	float	___379_rho	%read{126,1019} %write{109,998} %derivs
+local	float	___379_d	%read{127,1016} %write{124,1013} %derivs
+local	float	___379_d_min	%read{127,1017} %write{125,1014} %derivs
+local	float	___379_d_max	%read{128,1017} %write{126,1015} %derivs
+local	float	___379_x_mu	%read{137,1026} %write{129,1018} %derivs
+local	float	___379_x_r	%read{145,1034} %write{130,1019} %derivs
+local	float	___380_u	%read{147,1036} %write{138,1027} %derivs
+local	float	___380_v	%read{147,1036} %write{146,1035} %derivs
+local	float	___381_r_d	%read{825,1014} %write{822,822} %derivs
+local	float	___381_mu_d	%read{831,1007} %write{829,829} %derivs
+local	color	___382_t1	%read{934,934} %write{881,881}
+local	color	___382_t2	%read{933,933} %write{932,932}
+local	color	___383_t1	%read{1038,1038} %write{986,986}
+local	color	___383_t2	%read{1037,1037} %write{1036,1036}
+local	float	___384_H	%read{162,579} %write{155,495} %derivs
+local	float	___384_rho	%read{162,549} %write{161,501} %derivs
+local	float	___384_r_mu	%read{172,541} %write{171,511} %derivs
+local	float	___384_discriminant	%read{180,543} %write{176,516} %derivs
+local	float	___385_d	%read{188,528} %write{182,522} %derivs
+local	float	___385_d_min	%read{185,529} %write{183,523} %derivs
+local	float	___385_d_max	%read{185,529} %write{184,524} %derivs
+local	float	___386_d	%read{210,550} %write{207,547} %derivs
+local	float	___386_d_min	%read{210,551} %write{208,548} %derivs
+local	float	___386_d_max	%read{211,551} %write{209,549} %derivs
+local	float	___384_d	%read{240,580} %write{237,577} %derivs
+local	float	___384_d_min	%read{240,599} %write{238,578} %derivs
+local	float	___384_d_max	%read{241,599} %write{239,579} %derivs
+local	float	___384_a	%read{261,604} %write{242,582} %derivs
+local	float	___384_D	%read{258,598} %write{257,597} %derivs
+local	float	___384_A	%read{261,601} %write{260,600} %derivs
+local	int	___387_depth	%read{290,797} %write{286,783} %derivs
+local	float	___387_w_clamped	%read{292,789} %write{289,786} %derivs
+local	float	___387_w_scaled	%read{293,796} %write{292,789} %derivs
+local	int	___387_slice0	%read{295,799} %write{294,791} %derivs
+local	int	___387_slice1	%read{305,802} %write{297,794} %derivs
+local	float	___387_w_frac	%read{310,807} %write{299,796}
+local	float	___387_slice_width	%read{304,804} %write{301,798} %derivs
+local	float	___387_u0	%read{308,805} %write{304,801} %derivs
+local	float	___387_u1	%read{309,806} %write{307,804} %derivs
+local	color	___387_c0	%read{310,807} %write{308,805}
+local	color	___387_c1	%read{310,807} %write{309,806}
+local	float	___391_u_nu	%read{276,616} %write{275,615} %derivs
+local	float	___391_u_mu_s	%read{279,622} %write{273,613} %derivs
+local	float	___391_u_mu	%read{308,806} %write{200,562} %derivs
+local	float	___391_u_r	%read{288,785} %write{170,510} %derivs
+local	float	___391_tex_coord_x	%read{277,618} %write{276,616} %derivs
+local	float	___391_tex_x	%read{278,621} %write{277,617} %derivs
+local	float	___391_lerp_factor	%read{337,808} %write{278,618}
+local	float	___391_uvw0_x	%read{303,775} %write{280,620} %derivs
+local	float	___391_uvw1_x	%read{329,803} %write{283,623} %derivs
+local	color	___392_s0	%read{338,678} %write{310,650}
+local	color	___392_s1	%read{339,679} %write{336,676}
+local	color	___392_combined	%read{341,690} %write{340,680}
+local	point	___395_camera	%read{54,76} %write{53,67} %derivs
+local	float	___395_r	%read{58,964} %write{54,68} %derivs
+local	float	___395_rmu	%read{56,75} %write{55,69} %derivs
+local	float	___395_distance_to_top	%read{64,69} %write{63,63} %derivs
+local	float	___395_mu	%read{80,957} %write{75,75} %derivs
+local	float	___395_mu_s	%read{225,486} %write{77,77} %derivs
+local	float	___395_nu	%read{274,1062} %write{78,78} %derivs
+local	int	___395_ray_intersects_ground	%read{96,830} %write{93,94}
+local	color	___395_scattering_result	%read{1041,1048} %write{341,1041}
+local	color	___395_single_mie	%read{1042,1066} %write{347,1042}
+local	float	___399_d	%read{471,487} %write{470,470} %derivs
+local	float	___399_r_p	%read{485,548} %write{482,482} %derivs
+local	float	___399_mu_p	%read{511,511} %write{485,485} %derivs
+local	float	___399_mu_s_p	%read{565,571} %write{489,489} %derivs
+local	color	___399_shadow_transmittance	%read{1041,1042} %write{935,1039}
+local	vector	view_ray	%read{5,1089} %write{1,1} %derivs
+local	float	___400_cos_sun_angle	%read{7,11} %write{5,5}
+local	float	___400_sun_threshold	%read{7,10} %write{6,6}
+local	float	___405_u	%read{37,37} %write{33,33} %derivs
+local	float	___405_v	%read{37,37} %write{36,36} %derivs
+local	float	___406_u	%read{47,47} %write{43,43} %derivs
+local	float	___406_v	%read{48,48} %write{46,46} %derivs
+local	point	cam	%read{53,53} %write{50,50} %derivs
+local	color	transmittance_out	%read{1079,1100} %write{72,147}
+local	color	radiance	%read{1069,1101} %write{73,1081}
+local	float	___407_cos_sun_angle	%read{1074,1074} %write{1072,1072}
+local	color	___408_sun_radiance	%read{1079,1079} %write{1078,1078}
+local	float	___410_cos_sun_angle	%read{1091,1091} %write{1089,1089}
+local	color	___411_sun_radiance	%read{1096,1096} %write{1095,1095}
+temp	vector	$tmp1	%read{1,1} %write{0,0} %derivs
+const	int	$const1	5		%read{2,2} %write{2147483647,-1}
+temp	int	$tmp2	%read{3,3} %write{2,2}
+temp	vector	$tmp3	%read{5,5} %write{4,4}
+temp	int	$tmp4	%read{8,8} %write{7,7}
+const	color	$const2	1000 1000 1000		%read{9,9} %write{2147483647,-1}
+const	float	$const3	0.00999999978		%read{10,10} %write{2147483647,-1}
+temp	float	$tmp5	%read{11,11} %write{10,10}
+temp	int	$tmp6	%read{12,12} %write{11,11}
+const	color	$const4	1 0.5 0		%read{13,13} %write{2147483647,-1}
+const	color	$const5	0.100000001 0.100000001 0.300000012		%read{14,14} %write{2147483647,-1}
+const	int	$const6	1		%read{16,793} %write{2147483647,-1}
+temp	int	$tmp7	%read{17,17} %write{16,16}
+const	int	$const7	0		%read{18,693} %write{2147483647,-1}
+temp	float	$tmp8	%read{19,19} %write{18,18}
+const	float	$const8	0.5		%read{19,1030} %write{2147483647,-1}
+temp	float	$tmp9	%read{20,20} %write{19,19}
+temp	float	$tmp10	%read{27,27} %write{20,20}
+temp	float	$tmp11	%read{22,22} %write{21,21}
+temp	float	$tmp12	%read{23,23} %write{22,22}
+temp	float	$tmp13	%read{27,27} %write{23,23}
+const	int	$const9	2		%read{24,44} %write{2147483647,-1}
+temp	float	$tmp14	%read{25,25} %write{24,24}
+temp	float	$tmp15	%read{26,26} %write{25,25}
+temp	float	$tmp16	%read{27,27} %write{26,26}
+temp	int	$tmp17	%read{30,30} %write{29,29}
+temp	float	$tmp18	%read{32,32} %write{31,31} %derivs
+temp	float	$tmp19	%read{33,33} %write{32,32} %derivs
+temp	float	$tmp20	%read{35,35} %write{34,34} %derivs
+temp	float	$tmp21	%read{36,36} %write{35,35} %derivs
+const	int	$const10	3		%read{39,39} %write{2147483647,-1}
+temp	int	$tmp22	%read{40,40} %write{39,39}
+temp	float	$tmp23	%read{42,42} %write{41,41} %derivs
+temp	float	$tmp24	%read{43,43} %write{42,42} %derivs
+temp	float	$tmp25	%read{45,45} %write{44,44} %derivs
+temp	float	$tmp26	%read{46,46} %write{45,45} %derivs
+const	float	$const11	0.03125		%read{47,47} %write{2147483647,-1}
+temp	float	$tmp27	%read{48,48} %write{47,47} %derivs
+const	float	$const12	0		%read{64,1013} %write{2147483647,-1}
+temp	vector	$tmp28	%read{76,78} %write{51,51} %derivs
+const	string	$const13	"GetSkyRadiance"		%read{52,52} %write{2147483647,-1}
+temp	float	$tmp29	%read{63,63} %write{56,56} %derivs
+temp	float	$tmp30	%read{63,63} %write{62,62} %derivs
+temp	float	$tmp31	%read{59,59} %write{57,57} %derivs
+temp	float	$tmp32	%read{59,59} %write{58,58} %derivs
+temp	float	$tmp33	%read{61,61} %write{59,59} %derivs
+temp	float	$tmp34	%read{61,61} %write{60,60} %derivs
+temp	float	$tmp35	%read{62,62} %write{61,61} %derivs
+temp	int	$tmp36	%read{65,65} %write{64,64}
+temp	vector	$tmp37	%read{67,67} %write{66,66} %derivs
+temp	int	$tmp38	%read{71,71} %write{70,70}
+const	color	$const14	1 1 1		%read{72,1039} %write{2147483647,-1}
+const	color	$const15	0 0 0		%read{73,687} %write{2147483647,-1}
+temp	float	$tmp39	%read{77,77} %write{76,76} %derivs
+const	string	$const16	"RayIntersectsGround"		%read{79,79} %write{2147483647,-1}
+temp	int	$tmp40	%read{81,81} %write{80,80}
+temp	int	$tmp41	%read{82,92} %write{81,91}
+temp	float	$tmp42	%read{86,86} %write{83,83}
+temp	float	$tmp43	%read{85,85} %write{84,84}
+const	float	$const17	1		%read{85,1060} %write{2147483647,-1}
+temp	float	$tmp44	%read{86,86} %write{85,85}
+temp	float	$tmp45	%read{88,88} %write{86,86}
+temp	float	$tmp46	%read{88,88} %write{87,87}
+temp	float	$tmp47	%read{89,89} %write{88,88}
+temp	int	$tmp48	%read{90,90} %write{89,89}
+temp	int	$tmp49	%read{91,91} %write{90,90}
+const	string	$const18	"GetTransmittanceToTopAtmosphereBoundary"		%read{98,987} %write{2147483647,-1}
+const	string	$const19	"GetTransmittanceTextureUvFromRMu"		%read{99,988} %write{2147483647,-1}
+temp	float	$tmp50	%read{102,102} %write{100,100} %derivs
+temp	float	$tmp51	%read{102,102} %write{101,101} %derivs
+temp	float	$tmp52	%read{103,103} %write{102,102} %derivs
+temp	float	$tmp53	%read{106,106} %write{104,104} %derivs
+temp	float	$tmp54	%read{106,106} %write{105,105} %derivs
+temp	float	$tmp55	%read{108,108} %write{106,106} %derivs
+const	string	$const20	"SafeSqrt"		%read{107,1008} %write{2147483647,-1}
+temp	float	$tmp56	%read{109,109} %write{108,108} %derivs
+const	string	$const21	"DistanceToTopAtmosphereBoundary"		%read{110,999} %write{2147483647,-1}
+temp	float	$tmp57	%read{114,114} %write{111,111} %derivs
+temp	float	$tmp58	%read{113,113} %write{112,112} %derivs
+temp	float	$tmp59	%read{114,114} %write{113,113} %derivs
+temp	float	$tmp60	%read{116,116} %write{114,114} %derivs
+temp	float	$tmp61	%read{116,116} %write{115,115} %derivs
+temp	float	$tmp62	%read{118,118} %write{117,117} %derivs
+temp	float	$tmp63	%read{122,122} %write{118,118} %derivs
+temp	float	$tmp64	%read{122,122} %write{121,121} %derivs
+temp	float	$tmp65	%read{121,121} %write{120,120} %derivs
+temp	float	$tmp66	%read{124,124} %write{122,122} %derivs
+const	string	$const22	"ClampDistance"		%read{123,1012} %write{2147483647,-1}
+temp	float	$tmp67	%read{129,129} %write{127,127} %derivs
+temp	float	$tmp68	%read{129,129} %write{128,128} %derivs
+const	int	$const23	256		%read{132,1023} %write{2147483647,-1}
+const	string	$const24	"GetTextureCoordFromUnitRange"		%read{131,1028} %write{2147483647,-1}
+temp	float	$tmp69	%read{138,138} %write{133,133} %derivs
+temp	float	$tmp70	%read{133,133} %write{132,132} %derivs
+temp	float	$tmp71	%read{136,136} %write{135,135} %derivs
+temp	float	$tmp72	%read{135,135} %write{134,134} %derivs
+temp	float	$tmp73	%read{137,137} %write{136,136} %derivs
+temp	float	$tmp74	%read{138,138} %write{137,137} %derivs
+const	int	$const25	64		%read{140,1031} %write{2147483647,-1}
+temp	float	$tmp75	%read{146,146} %write{141,141} %derivs
+temp	float	$tmp76	%read{141,141} %write{140,140} %derivs
+temp	float	$tmp77	%read{144,144} %write{143,143} %derivs
+temp	float	$tmp78	%read{143,143} %write{142,142} %derivs
+temp	float	$tmp79	%read{145,145} %write{144,144} %derivs
+temp	float	$tmp80	%read{146,146} %write{145,145} %derivs
+temp	int	$tmp81	%read{149,149} %write{148,148}
+const	string	$const26	"GetCombinedScattering"		%read{150,490} %write{2147483647,-1}
+const	string	$const27	"GetScatteringTextureUvwzFromRMuMuSNu"		%read{151,491} %write{2147483647,-1}
+temp	float	$tmp82	%read{154,154} %write{152,152} %derivs
+temp	float	$tmp83	%read{154,154} %write{153,153} %derivs
+temp	float	$tmp84	%read{155,155} %write{154,154} %derivs
+temp	float	$tmp85	%read{158,158} %write{156,156} %derivs
+temp	float	$tmp86	%read{158,158} %write{157,157} %derivs
+temp	float	$tmp87	%read{160,160} %write{158,158} %derivs
+temp	float	$tmp88	%read{161,161} %write{160,160} %derivs
+temp	float	$tmp89	%read{169,169} %write{162,162} %derivs
+const	int	$const28	32		%read{164,783} %write{2147483647,-1}
+temp	float	$tmp90	%read{170,170} %write{165,165} %derivs
+temp	float	$tmp91	%read{165,165} %write{164,164} %derivs
+temp	float	$tmp92	%read{168,168} %write{167,167} %derivs
+temp	float	$tmp93	%read{167,167} %write{166,166} %derivs
+temp	float	$tmp94	%read{169,169} %write{168,168} %derivs
+temp	float	$tmp95	%read{170,170} %write{169,169} %derivs
+temp	float	$tmp96	%read{174,174} %write{172,172} %derivs
+temp	float	$tmp97	%read{174,174} %write{173,173} %derivs
+temp	float	$tmp98	%read{176,176} %write{174,174} %derivs
+temp	float	$tmp99	%read{176,176} %write{175,175} %derivs
+temp	float	$tmp100	%read{182,182} %write{178,178} %derivs
+temp	float	$tmp101	%read{182,182} %write{181,181} %derivs
+temp	float	$tmp102	%read{181,181} %write{180,180} %derivs
+temp	float	$tmp103	%read{199,199} %write{198,198} %derivs
+temp	float	$tmp104	%read{197,197} %write{187,190} %derivs
+temp	int	$tmp105	%read{186,186} %write{185,185}
+temp	float	$tmp106	%read{190,190} %write{188,188} %derivs
+temp	float	$tmp107	%read{190,190} %write{189,189} %derivs
+temp	float	$tmp108	%read{198,198} %write{193,193} %derivs
+temp	float	$tmp109	%read{193,193} %write{192,192} %derivs
+temp	float	$tmp110	%read{196,196} %write{195,195} %derivs
+temp	float	$tmp111	%read{195,195} %write{194,194} %derivs
+temp	float	$tmp112	%read{197,197} %write{196,196} %derivs
+temp	float	$tmp113	%read{198,198} %write{197,197} %derivs
+temp	float	$tmp114	%read{200,200} %write{199,199} %derivs
+temp	float	$tmp115	%read{207,207} %write{201,201} %derivs
+temp	float	$tmp116	%read{207,207} %write{206,206} %derivs
+temp	float	$tmp117	%read{203,203} %write{202,202} %derivs
+temp	float	$tmp118	%read{205,205} %write{203,203} %derivs
+temp	float	$tmp119	%read{206,206} %write{205,205} %derivs
+temp	float	$tmp120	%read{221,221} %write{220,220} %derivs
+temp	float	$tmp121	%read{212,212} %write{210,210} %derivs
+temp	float	$tmp122	%read{212,212} %write{211,211} %derivs
+temp	float	$tmp123	%read{219,219} %write{212,212} %derivs
+temp	float	$tmp124	%read{220,220} %write{215,215} %derivs
+temp	float	$tmp125	%read{215,215} %write{214,214} %derivs
+temp	float	$tmp126	%read{218,218} %write{217,217} %derivs
+temp	float	$tmp127	%read{217,217} %write{216,216} %derivs
+temp	float	$tmp128	%read{219,219} %write{218,218} %derivs
+temp	float	$tmp129	%read{220,220} %write{219,219} %derivs
+temp	float	$tmp130	%read{222,222} %write{221,221} %derivs
+temp	float	$tmp131	%read{227,227} %write{224,224} %derivs
+temp	float	$tmp132	%read{226,226} %write{225,225} %derivs
+temp	float	$tmp133	%read{227,227} %write{226,226} %derivs
+temp	float	$tmp134	%read{229,229} %write{227,227} %derivs
+temp	float	$tmp135	%read{229,229} %write{228,228} %derivs
+temp	float	$tmp136	%read{231,231} %write{230,230} %derivs
+temp	float	$tmp137	%read{235,235} %write{231,231} %derivs
+temp	float	$tmp138	%read{235,235} %write{234,234} %derivs
+temp	float	$tmp139	%read{234,234} %write{233,233} %derivs
+temp	float	$tmp140	%read{237,237} %write{235,235} %derivs
+temp	float	$tmp141	%read{242,242} %write{240,240} %derivs
+temp	float	$tmp142	%read{242,242} %write{241,241} %derivs
+temp	float	$tmp143	%read{247,247} %write{244,244} %derivs
+temp	float	$tmp144	%read{246,246} %write{245,245} %derivs
+temp	float	$tmp145	%read{247,247} %write{246,246} %derivs
+temp	float	$tmp146	%read{249,249} %write{247,247} %derivs
+temp	float	$tmp147	%read{249,249} %write{248,248} %derivs
+temp	float	$tmp148	%read{251,251} %write{250,250} %derivs
+temp	float	$tmp149	%read{255,255} %write{251,251} %derivs
+temp	float	$tmp150	%read{255,255} %write{254,254} %derivs
+temp	float	$tmp151	%read{254,254} %write{253,253} %derivs
+temp	float	$tmp152	%read{257,257} %write{255,255} %derivs
+temp	float	$tmp153	%read{260,260} %write{258,258} %derivs
+temp	float	$tmp154	%read{260,260} %write{259,259} %derivs
+temp	float	$tmp155	%read{265,265} %write{263,263} %derivs
+temp	float	$tmp156	%read{262,262} %write{261,261} %derivs
+temp	float	$tmp157	%read{263,263} %write{262,262} %derivs
+temp	float	$tmp158	%read{265,265} %write{264,264} %derivs
+temp	float	$tmp159	%read{272,272} %write{265,265} %derivs
+temp	float	$tmp160	%read{273,273} %write{268,268} %derivs
+temp	float	$tmp161	%read{268,268} %write{267,267} %derivs
+temp	float	$tmp162	%read{271,271} %write{270,270} %derivs
+temp	float	$tmp163	%read{270,270} %write{269,269} %derivs
+temp	float	$tmp164	%read{272,272} %write{271,271} %derivs
+temp	float	$tmp165	%read{273,273} %write{272,272} %derivs
+temp	float	$tmp166	%read{275,275} %write{274,274} %derivs
+const	float	$const29	2		%read{275,1061} %write{2147483647,-1}
+const	float	$const31	7		%read{276,616} %write{2147483647,-1}
+temp	float	$tmp167	%read{280,280} %write{279,279} %derivs
+const	float	$const33	8		%read{280,623} %write{2147483647,-1}
+temp	float	$tmp168	%read{282,282} %write{281,281} %derivs
+temp	float	$tmp169	%read{283,283} %write{282,282} %derivs
+const	string	$const34	"GetScatteringTiled2D"		%read{285,782} %write{2147483647,-1}
+const	string	$const35	"clamp"		%read{287,827} %write{2147483647,-1}
+temp	float	$tmp170	%read{289,289} %write{288,288} %derivs
+temp	int	$tmp171	%read{291,291} %write{290,290} %derivs
+temp	float	$tmp172	%read{292,292} %write{291,291} %derivs
+temp	float	$tmp173	%read{294,294} %write{293,293} %derivs
+temp	int	$tmp174	%read{297,297} %write{295,295} %derivs
+temp	int	$tmp175	%read{297,297} %write{296,296} %derivs
+temp	float	$tmp176	%read{299,299} %write{298,298}
+temp	float	$tmp177	%read{301,301} %write{300,300} %derivs
+temp	float	$tmp178	%read{304,304} %write{303,303} %derivs
+temp	float	$tmp179	%read{303,303} %write{302,302} %derivs
+temp	float	$tmp180	%read{307,307} %write{306,306} %derivs
+temp	float	$tmp181	%read{306,306} %write{305,305} %derivs
+temp	float	$tmp182	%read{315,315} %write{314,314} %derivs
+temp	int	$tmp183	%read{317,317} %write{316,316} %derivs
+temp	float	$tmp184	%read{318,318} %write{317,317} %derivs
+temp	float	$tmp185	%read{320,320} %write{319,319} %derivs
+temp	int	$tmp186	%read{323,323} %write{321,321} %derivs
+temp	int	$tmp187	%read{323,323} %write{322,322} %derivs
+temp	float	$tmp188	%read{325,325} %write{324,324}
+temp	float	$tmp189	%read{327,327} %write{326,326} %derivs
+temp	float	$tmp190	%read{330,330} %write{329,329} %derivs
+temp	float	$tmp191	%read{329,329} %write{328,328} %derivs
+temp	float	$tmp192	%read{333,333} %write{332,332} %derivs
+temp	float	$tmp193	%read{332,332} %write{331,331} %derivs
+temp	float	$tmp194	%read{338,338} %write{337,337}
+temp	color	$tmp195	%read{340,340} %write{338,338}
+temp	color	$tmp196	%read{340,340} %write{339,339}
+temp	float	$tmp197	%read{349,349} %write{342,342}
+const	string	$const36	"GetExtrapolatedSingleMieScattering"		%read{343,683} %write{2147483647,-1}
+temp	float	$tmp198	%read{345,345} %write{344,344}
+temp	int	$tmp199	%read{346,346} %write{345,345}
+temp	color	$tmp200	%read{351,351} %write{349,349}
+temp	float	$tmp201	%read{351,351} %write{350,350}
+temp	color	$tmp202	%read{355,355} %write{351,351}
+temp	float	$tmp203	%read{354,354} %write{352,352}
+temp	float	$tmp204	%read{354,354} %write{353,353}
+temp	float	$tmp205	%read{355,355} %write{354,354}
+temp	color	$tmp206	%read{357,357} %write{355,355}
+temp	color	$tmp207	%read{357,357} %write{356,356}
+temp	color	$tmp208	%read{385,385} %write{383,383}
+temp	float	$tmp209	%read{362,362} %write{361,361} %derivs
+temp	int	$tmp210	%read{364,364} %write{363,363} %derivs
+temp	float	$tmp211	%read{365,365} %write{364,364} %derivs
+temp	float	$tmp212	%read{367,367} %write{366,366} %derivs
+temp	int	$tmp213	%read{370,370} %write{368,368} %derivs
+temp	int	$tmp214	%read{370,370} %write{369,369} %derivs
+temp	float	$tmp215	%read{372,372} %write{371,371}
+temp	float	$tmp216	%read{374,374} %write{373,373} %derivs
+temp	float	$tmp217	%read{377,377} %write{376,376} %derivs
+temp	float	$tmp218	%read{376,376} %write{375,375} %derivs
+temp	float	$tmp219	%read{380,380} %write{379,379} %derivs
+temp	float	$tmp220	%read{379,379} %write{378,378} %derivs
+temp	float	$tmp221	%read{385,385} %write{384,384}
+temp	color	$tmp222	%read{413,413} %write{385,385}
+temp	color	$tmp223	%read{412,412} %write{411,411}
+temp	float	$tmp224	%read{390,390} %write{389,389} %derivs
+temp	int	$tmp225	%read{392,392} %write{391,391} %derivs
+temp	float	$tmp226	%read{393,393} %write{392,392} %derivs
+temp	float	$tmp227	%read{395,395} %write{394,394} %derivs
+temp	int	$tmp228	%read{398,398} %write{396,396} %derivs
+temp	int	$tmp229	%read{398,398} %write{397,397} %derivs
+temp	float	$tmp230	%read{400,400} %write{399,399}
+temp	float	$tmp231	%read{402,402} %write{401,401} %derivs
+temp	float	$tmp232	%read{405,405} %write{404,404} %derivs
+temp	float	$tmp233	%read{404,404} %write{403,403} %derivs
+temp	float	$tmp234	%read{408,408} %write{407,407} %derivs
+temp	float	$tmp235	%read{407,407} %write{406,406} %derivs
+temp	color	$tmp236	%read{413,413} %write{412,412}
+temp	color	$tmp237	%read{441,441} %write{439,439}
+temp	float	$tmp238	%read{418,418} %write{417,417} %derivs
+temp	int	$tmp239	%read{420,420} %write{419,419} %derivs
+temp	float	$tmp240	%read{421,421} %write{420,420} %derivs
+temp	float	$tmp241	%read{423,423} %write{422,422} %derivs
+temp	int	$tmp242	%read{426,426} %write{424,424} %derivs
+temp	int	$tmp243	%read{426,426} %write{425,425} %derivs
+temp	float	$tmp244	%read{428,428} %write{427,427}
+temp	float	$tmp245	%read{430,430} %write{429,429} %derivs
+temp	float	$tmp246	%read{433,433} %write{432,432} %derivs
+temp	float	$tmp247	%read{432,432} %write{431,431} %derivs
+temp	float	$tmp248	%read{436,436} %write{435,435} %derivs
+temp	float	$tmp249	%read{435,435} %write{434,434} %derivs
+temp	float	$tmp250	%read{441,441} %write{440,440}
+temp	color	$tmp251	%read{469,469} %write{441,441}
+temp	color	$tmp252	%read{468,468} %write{467,467}
+temp	float	$tmp253	%read{446,446} %write{445,445} %derivs
+temp	int	$tmp254	%read{448,448} %write{447,447} %derivs
+temp	float	$tmp255	%read{449,449} %write{448,448} %derivs
+temp	float	$tmp256	%read{451,451} %write{450,450} %derivs
+temp	int	$tmp257	%read{454,454} %write{452,452} %derivs
+temp	int	$tmp258	%read{454,454} %write{453,453} %derivs
+temp	float	$tmp259	%read{456,456} %write{455,455}
+temp	float	$tmp260	%read{458,458} %write{457,457} %derivs
+temp	float	$tmp261	%read{461,461} %write{460,460} %derivs
+temp	float	$tmp262	%read{460,460} %write{459,459} %derivs
+temp	float	$tmp263	%read{464,464} %write{463,463} %derivs
+temp	float	$tmp264	%read{463,463} %write{462,462} %derivs
+temp	color	$tmp265	%read{469,469} %write{468,468}
+temp	float	$tmp266	%read{481,481} %write{478,478} %derivs
+temp	float	$tmp267	%read{475,475} %write{471,471} %derivs
+temp	float	$tmp268	%read{473,473} %write{472,472} %derivs
+temp	float	$tmp269	%read{474,474} %write{473,473} %derivs
+temp	float	$tmp270	%read{475,475} %write{474,474} %derivs
+temp	float	$tmp271	%read{477,477} %write{475,475} %derivs
+temp	float	$tmp272	%read{477,477} %write{476,476} %derivs
+temp	float	$tmp273	%read{478,478} %write{477,477} %derivs
+const	string	$const37	"ClampRadius"		%read{479,819} %write{2147483647,-1}
+temp	float	$tmp274	%read{482,482} %write{481,481} %derivs
+temp	float	$tmp275	%read{484,484} %write{483,483} %derivs
+temp	float	$tmp276	%read{485,485} %write{484,484} %derivs
+temp	float	$tmp277	%read{488,488} %write{486,486} %derivs
+temp	float	$tmp278	%read{488,488} %write{487,487} %derivs
+temp	float	$tmp279	%read{489,489} %write{488,488} %derivs
+temp	float	$tmp280	%read{494,494} %write{492,492} %derivs
+temp	float	$tmp281	%read{494,494} %write{493,493} %derivs
+temp	float	$tmp282	%read{495,495} %write{494,494} %derivs
+temp	float	$tmp283	%read{498,498} %write{496,496} %derivs
+temp	float	$tmp284	%read{498,498} %write{497,497} %derivs
+temp	float	$tmp285	%read{500,500} %write{498,498} %derivs
+temp	float	$tmp286	%read{501,501} %write{500,500} %derivs
+temp	float	$tmp287	%read{509,509} %write{502,502} %derivs
+temp	float	$tmp288	%read{510,510} %write{505,505} %derivs
+temp	float	$tmp289	%read{505,505} %write{504,504} %derivs
+temp	float	$tmp290	%read{508,508} %write{507,507} %derivs
+temp	float	$tmp291	%read{507,507} %write{506,506} %derivs
+temp	float	$tmp292	%read{509,509} %write{508,508} %derivs
+temp	float	$tmp293	%read{510,510} %write{509,509} %derivs
+temp	float	$tmp294	%read{514,514} %write{512,512} %derivs
+temp	float	$tmp295	%read{514,514} %write{513,513} %derivs
+temp	float	$tmp296	%read{516,516} %write{514,514} %derivs
+temp	float	$tmp297	%read{516,516} %write{515,515} %derivs
+temp	float	$tmp298	%read{522,522} %write{518,518} %derivs
+temp	float	$tmp299	%read{522,522} %write{521,521} %derivs
+temp	float	$tmp300	%read{521,521} %write{520,520} %derivs
+temp	float	$tmp301	%read{539,539} %write{538,538} %derivs
+temp	float	$tmp302	%read{537,537} %write{527,530} %derivs
+temp	int	$tmp303	%read{526,526} %write{525,525}
+temp	float	$tmp304	%read{530,530} %write{528,528} %derivs
+temp	float	$tmp305	%read{530,530} %write{529,529} %derivs
+temp	float	$tmp306	%read{538,538} %write{533,533} %derivs
+temp	float	$tmp307	%read{533,533} %write{532,532} %derivs
+temp	float	$tmp308	%read{536,536} %write{535,535} %derivs
+temp	float	$tmp309	%read{535,535} %write{534,534} %derivs
+temp	float	$tmp310	%read{537,537} %write{536,536} %derivs
+temp	float	$tmp311	%read{538,538} %write{537,537} %derivs
+temp	float	$tmp312	%read{540,540} %write{539,539} %derivs
+temp	float	$tmp313	%read{547,547} %write{541,541} %derivs
+temp	float	$tmp314	%read{547,547} %write{546,546} %derivs
+temp	float	$tmp315	%read{543,543} %write{542,542} %derivs
+temp	float	$tmp316	%read{545,545} %write{543,543} %derivs
+temp	float	$tmp317	%read{546,546} %write{545,545} %derivs
+temp	float	$tmp318	%read{561,561} %write{560,560} %derivs
+temp	float	$tmp319	%read{552,552} %write{550,550} %derivs
+temp	float	$tmp320	%read{552,552} %write{551,551} %derivs
+temp	float	$tmp321	%read{559,559} %write{552,552} %derivs
+temp	float	$tmp322	%read{560,560} %write{555,555} %derivs
+temp	float	$tmp323	%read{555,555} %write{554,554} %derivs
+temp	float	$tmp324	%read{558,558} %write{557,557} %derivs
+temp	float	$tmp325	%read{557,557} %write{556,556} %derivs
+temp	float	$tmp326	%read{559,559} %write{558,558} %derivs
+temp	float	$tmp327	%read{560,560} %write{559,559} %derivs
+temp	float	$tmp328	%read{562,562} %write{561,561} %derivs
+temp	float	$tmp329	%read{567,567} %write{564,564} %derivs
+temp	float	$tmp330	%read{566,566} %write{565,565} %derivs
+temp	float	$tmp331	%read{567,567} %write{566,566} %derivs
+temp	float	$tmp332	%read{569,569} %write{567,567} %derivs
+temp	float	$tmp333	%read{569,569} %write{568,568} %derivs
+temp	float	$tmp334	%read{571,571} %write{570,570} %derivs
+temp	float	$tmp335	%read{575,575} %write{571,571} %derivs
+temp	float	$tmp336	%read{575,575} %write{574,574} %derivs
+temp	float	$tmp337	%read{574,574} %write{573,573} %derivs
+temp	float	$tmp338	%read{577,577} %write{575,575} %derivs
+temp	float	$tmp339	%read{582,582} %write{580,580} %derivs
+temp	float	$tmp340	%read{582,582} %write{581,581} %derivs
+temp	float	$tmp341	%read{587,587} %write{584,584} %derivs
+temp	float	$tmp342	%read{586,586} %write{585,585} %derivs
+temp	float	$tmp343	%read{587,587} %write{586,586} %derivs
+temp	float	$tmp344	%read{589,589} %write{587,587} %derivs
+temp	float	$tmp345	%read{589,589} %write{588,588} %derivs
+temp	float	$tmp346	%read{591,591} %write{590,590} %derivs
+temp	float	$tmp347	%read{595,595} %write{591,591} %derivs
+temp	float	$tmp348	%read{595,595} %write{594,594} %derivs
+temp	float	$tmp349	%read{594,594} %write{593,593} %derivs
+temp	float	$tmp350	%read{597,597} %write{595,595} %derivs
+temp	float	$tmp351	%read{600,600} %write{598,598} %derivs
+temp	float	$tmp352	%read{600,600} %write{599,599} %derivs
+temp	float	$tmp353	%read{605,605} %write{603,603} %derivs
+temp	float	$tmp354	%read{602,602} %write{601,601} %derivs
+temp	float	$tmp355	%read{603,603} %write{602,602} %derivs
+temp	float	$tmp356	%read{605,605} %write{604,604} %derivs
+temp	float	$tmp357	%read{612,612} %write{605,605} %derivs
+temp	float	$tmp358	%read{613,613} %write{608,608} %derivs
+temp	float	$tmp359	%read{608,608} %write{607,607} %derivs
+temp	float	$tmp360	%read{611,611} %write{610,610} %derivs
+temp	float	$tmp361	%read{610,610} %write{609,609} %derivs
+temp	float	$tmp362	%read{612,612} %write{611,611} %derivs
+temp	float	$tmp363	%read{613,613} %write{612,612} %derivs
+temp	float	$tmp364	%read{615,615} %write{614,614} %derivs
+temp	float	$tmp365	%read{620,620} %write{619,619} %derivs
+temp	float	$tmp366	%read{622,622} %write{621,621} %derivs
+temp	float	$tmp367	%read{623,623} %write{622,622} %derivs
+temp	float	$tmp368	%read{629,629} %write{628,628} %derivs
+temp	int	$tmp369	%read{631,631} %write{630,630} %derivs
+temp	float	$tmp370	%read{632,632} %write{631,631} %derivs
+temp	float	$tmp371	%read{634,634} %write{633,633} %derivs
+temp	int	$tmp372	%read{637,637} %write{635,635} %derivs
+temp	int	$tmp373	%read{637,637} %write{636,636} %derivs
+temp	float	$tmp374	%read{639,639} %write{638,638}
+temp	float	$tmp375	%read{641,641} %write{640,640} %derivs
+temp	float	$tmp376	%read{644,644} %write{643,643} %derivs
+temp	float	$tmp377	%read{643,643} %write{642,642} %derivs
+temp	float	$tmp378	%read{647,647} %write{646,646} %derivs
+temp	float	$tmp379	%read{646,646} %write{645,645} %derivs
+temp	float	$tmp380	%read{655,655} %write{654,654} %derivs
+temp	int	$tmp381	%read{657,657} %write{656,656} %derivs
+temp	float	$tmp382	%read{658,658} %write{657,657} %derivs
+temp	float	$tmp383	%read{660,660} %write{659,659} %derivs
+temp	int	$tmp384	%read{663,663} %write{661,661} %derivs
+temp	int	$tmp385	%read{663,663} %write{662,662} %derivs
+temp	float	$tmp386	%read{665,665} %write{664,664}
+temp	float	$tmp387	%read{667,667} %write{666,666} %derivs
+temp	float	$tmp388	%read{670,670} %write{669,669} %derivs
+temp	float	$tmp389	%read{669,669} %write{668,668} %derivs
+temp	float	$tmp390	%read{673,673} %write{672,672} %derivs
+temp	float	$tmp391	%read{672,672} %write{671,671} %derivs
+temp	float	$tmp392	%read{678,678} %write{677,677}
+temp	color	$tmp393	%read{680,680} %write{678,678}
+temp	color	$tmp394	%read{680,680} %write{679,679}
+temp	float	$tmp395	%read{689,689} %write{682,682}
+temp	float	$tmp396	%read{685,685} %write{684,684}
+temp	int	$tmp397	%read{686,686} %write{685,685}
+temp	color	$tmp398	%read{691,691} %write{689,689}
+temp	float	$tmp399	%read{691,691} %write{690,690}
+temp	color	$tmp400	%read{695,695} %write{691,691}
+temp	float	$tmp401	%read{694,694} %write{692,692}
+temp	float	$tmp402	%read{694,694} %write{693,693}
+temp	float	$tmp403	%read{695,695} %write{694,694}
+temp	color	$tmp404	%read{697,697} %write{695,695}
+temp	color	$tmp405	%read{697,697} %write{696,696}
+temp	color	$tmp406	%read{725,725} %write{723,723}
+temp	float	$tmp407	%read{702,702} %write{701,701} %derivs
+temp	int	$tmp408	%read{704,704} %write{703,703} %derivs
+temp	float	$tmp409	%read{705,705} %write{704,704} %derivs
+temp	float	$tmp410	%read{707,707} %write{706,706} %derivs
+temp	int	$tmp411	%read{710,710} %write{708,708} %derivs
+temp	int	$tmp412	%read{710,710} %write{709,709} %derivs
+temp	float	$tmp413	%read{712,712} %write{711,711}
+temp	float	$tmp414	%read{714,714} %write{713,713} %derivs
+temp	float	$tmp415	%read{717,717} %write{716,716} %derivs
+temp	float	$tmp416	%read{716,716} %write{715,715} %derivs
+temp	float	$tmp417	%read{720,720} %write{719,719} %derivs
+temp	float	$tmp418	%read{719,719} %write{718,718} %derivs
+temp	float	$tmp419	%read{725,725} %write{724,724}
+temp	color	$tmp420	%read{753,753} %write{725,725}
+temp	color	$tmp421	%read{752,752} %write{751,751}
+temp	float	$tmp422	%read{730,730} %write{729,729} %derivs
+temp	int	$tmp423	%read{732,732} %write{731,731} %derivs
+temp	float	$tmp424	%read{733,733} %write{732,732} %derivs
+temp	float	$tmp425	%read{735,735} %write{734,734} %derivs
+temp	int	$tmp426	%read{738,738} %write{736,736} %derivs
+temp	int	$tmp427	%read{738,738} %write{737,737} %derivs
+temp	float	$tmp428	%read{740,740} %write{739,739}
+temp	float	$tmp429	%read{742,742} %write{741,741} %derivs
+temp	float	$tmp430	%read{745,745} %write{744,744} %derivs
+temp	float	$tmp431	%read{744,744} %write{743,743} %derivs
+temp	float	$tmp432	%read{748,748} %write{747,747} %derivs
+temp	float	$tmp433	%read{747,747} %write{746,746} %derivs
+temp	color	$tmp434	%read{753,753} %write{752,752}
+temp	color	$tmp435	%read{781,781} %write{779,779}
+temp	float	$tmp436	%read{758,758} %write{757,757} %derivs
+temp	int	$tmp437	%read{760,760} %write{759,759} %derivs
+temp	float	$tmp438	%read{761,761} %write{760,760} %derivs
+temp	float	$tmp439	%read{763,763} %write{762,762} %derivs
+temp	int	$tmp440	%read{766,766} %write{764,764} %derivs
+temp	int	$tmp441	%read{766,766} %write{765,765} %derivs
+temp	float	$tmp442	%read{768,768} %write{767,767}
+temp	float	$tmp443	%read{770,770} %write{769,769} %derivs
+temp	float	$tmp444	%read{773,773} %write{772,772} %derivs
+temp	float	$tmp445	%read{772,772} %write{771,771} %derivs
+temp	float	$tmp446	%read{776,776} %write{775,775} %derivs
+temp	float	$tmp447	%read{775,775} %write{774,774} %derivs
+temp	float	$tmp448	%read{781,781} %write{780,780}
+temp	color	$tmp449	%read{809,809} %write{781,781}
+temp	color	$tmp450	%read{808,808} %write{807,807}
+temp	float	$tmp451	%read{786,786} %write{785,785} %derivs
+temp	int	$tmp452	%read{788,788} %write{787,787} %derivs
+temp	float	$tmp453	%read{789,789} %write{788,788} %derivs
+temp	float	$tmp454	%read{791,791} %write{790,790} %derivs
+temp	int	$tmp455	%read{794,794} %write{792,792} %derivs
+temp	int	$tmp456	%read{794,794} %write{793,793} %derivs
+temp	float	$tmp457	%read{796,796} %write{795,795}
+temp	float	$tmp458	%read{798,798} %write{797,797} %derivs
+temp	float	$tmp459	%read{801,801} %write{800,800} %derivs
+temp	float	$tmp460	%read{800,800} %write{799,799} %derivs
+temp	float	$tmp461	%read{804,804} %write{803,803} %derivs
+temp	float	$tmp462	%read{803,803} %write{802,802} %derivs
+temp	color	$tmp463	%read{809,809} %write{808,808}
+const	string	$const38	"GetTransmittance"		%read{810,810} %write{2147483647,-1}
+temp	float	$tmp464	%read{821,821} %write{818,818} %derivs
+temp	float	$tmp465	%read{815,815} %write{811,811} %derivs
+temp	float	$tmp466	%read{813,813} %write{812,812} %derivs
+temp	float	$tmp467	%read{814,814} %write{813,813} %derivs
+temp	float	$tmp468	%read{815,815} %write{814,814} %derivs
+temp	float	$tmp469	%read{817,817} %write{815,815} %derivs
+temp	float	$tmp470	%read{817,817} %write{816,816} %derivs
+temp	float	$tmp471	%read{818,818} %write{817,817} %derivs
+temp	float	$tmp472	%read{822,822} %write{821,821} %derivs
+temp	float	$tmp473	%read{824,824} %write{823,823} %derivs
+temp	float	$tmp474	%read{825,825} %write{824,824} %derivs
+temp	float	$tmp475	%read{828,828} %write{825,825} %derivs
+const	string	$const39	"ClampCosine"		%read{826,826} %write{2147483647,-1}
+const	float	$const40	-1		%read{829,829} %write{2147483647,-1}
+temp	float	$tmp476	%read{829,829} %write{828,828} %derivs
+temp	float	$tmp477	%read{846,852} %write{831,831} %derivs
+temp	float	$tmp478	%read{836,836} %write{834,834} %derivs
+temp	float	$tmp479	%read{836,836} %write{835,835} %derivs
+temp	float	$tmp480	%read{837,837} %write{836,836} %derivs
+temp	float	$tmp481	%read{840,840} %write{838,838} %derivs
+temp	float	$tmp482	%read{840,840} %write{839,839} %derivs
+temp	float	$tmp483	%read{842,842} %write{840,840} %derivs
+temp	float	$tmp484	%read{843,843} %write{842,842} %derivs
+temp	float	$tmp485	%read{848,848} %write{845,845} %derivs
+temp	float	$tmp486	%read{847,847} %write{846,846} %derivs
+temp	float	$tmp487	%read{848,848} %write{847,847} %derivs
+temp	float	$tmp488	%read{850,850} %write{848,848} %derivs
+temp	float	$tmp489	%read{850,850} %write{849,849} %derivs
+temp	float	$tmp490	%read{852,852} %write{851,851} %derivs
+temp	float	$tmp491	%read{856,856} %write{852,852} %derivs
+temp	float	$tmp492	%read{856,856} %write{855,855} %derivs
+temp	float	$tmp493	%read{855,855} %write{854,854} %derivs
+temp	float	$tmp494	%read{858,858} %write{856,856} %derivs
+temp	float	$tmp495	%read{863,863} %write{861,861} %derivs
+temp	float	$tmp496	%read{863,863} %write{862,862} %derivs
+temp	float	$tmp497	%read{872,872} %write{867,867} %derivs
+temp	float	$tmp498	%read{867,867} %write{866,866} %derivs
+temp	float	$tmp499	%read{870,870} %write{869,869} %derivs
+temp	float	$tmp500	%read{869,869} %write{868,868} %derivs
+temp	float	$tmp501	%read{871,871} %write{870,870} %derivs
+temp	float	$tmp502	%read{872,872} %write{871,871} %derivs
+temp	float	$tmp503	%read{880,880} %write{875,875} %derivs
+temp	float	$tmp504	%read{875,875} %write{874,874} %derivs
+temp	float	$tmp505	%read{878,878} %write{877,877} %derivs
+temp	float	$tmp506	%read{877,877} %write{876,876} %derivs
+temp	float	$tmp507	%read{879,879} %write{878,878} %derivs
+temp	float	$tmp508	%read{880,880} %write{879,879} %derivs
+temp	float	$tmp509	%read{897,903} %write{882,882} %derivs
+temp	float	$tmp510	%read{887,887} %write{885,885} %derivs
+temp	float	$tmp511	%read{887,887} %write{886,886} %derivs
+temp	float	$tmp512	%read{888,888} %write{887,887} %derivs
+temp	float	$tmp513	%read{891,891} %write{889,889} %derivs
+temp	float	$tmp514	%read{891,891} %write{890,890} %derivs
+temp	float	$tmp515	%read{893,893} %write{891,891} %derivs
+temp	float	$tmp516	%read{894,894} %write{893,893} %derivs
+temp	float	$tmp517	%read{899,899} %write{896,896} %derivs
+temp	float	$tmp518	%read{898,898} %write{897,897} %derivs
+temp	float	$tmp519	%read{899,899} %write{898,898} %derivs
+temp	float	$tmp520	%read{901,901} %write{899,899} %derivs
+temp	float	$tmp521	%read{901,901} %write{900,900} %derivs
+temp	float	$tmp522	%read{903,903} %write{902,902} %derivs
+temp	float	$tmp523	%read{907,907} %write{903,903} %derivs
+temp	float	$tmp524	%read{907,907} %write{906,906} %derivs
+temp	float	$tmp525	%read{906,906} %write{905,905} %derivs
+temp	float	$tmp526	%read{909,909} %write{907,907} %derivs
+temp	float	$tmp527	%read{914,914} %write{912,912} %derivs
+temp	float	$tmp528	%read{914,914} %write{913,913} %derivs
+temp	float	$tmp529	%read{923,923} %write{918,918} %derivs
+temp	float	$tmp530	%read{918,918} %write{917,917} %derivs
+temp	float	$tmp531	%read{921,921} %write{920,920} %derivs
+temp	float	$tmp532	%read{920,920} %write{919,919} %derivs
+temp	float	$tmp533	%read{922,922} %write{921,921} %derivs
+temp	float	$tmp534	%read{923,923} %write{922,922} %derivs
+temp	float	$tmp535	%read{931,931} %write{926,926} %derivs
+temp	float	$tmp536	%read{926,926} %write{925,925} %derivs
+temp	float	$tmp537	%read{929,929} %write{928,928} %derivs
+temp	float	$tmp538	%read{928,928} %write{927,927} %derivs
+temp	float	$tmp539	%read{930,930} %write{929,929} %derivs
+temp	float	$tmp540	%read{931,931} %write{930,930} %derivs
+temp	color	$tmp541	%read{934,934} %write{933,933}
+const	color	$const41	9.99999997e-07 9.99999997e-07 9.99999997e-07		%read{933,1037} %write{2147483647,-1}
+temp	color	$tmp543	%read{935,935} %write{934,934}
+temp	float	$tmp545	%read{941,941} %write{939,939} %derivs
+temp	float	$tmp546	%read{941,941} %write{940,940} %derivs
+temp	float	$tmp547	%read{942,942} %write{941,941} %derivs
+temp	float	$tmp548	%read{945,945} %write{943,943} %derivs
+temp	float	$tmp549	%read{945,945} %write{944,944} %derivs
+temp	float	$tmp550	%read{947,947} %write{945,945} %derivs
+temp	float	$tmp551	%read{948,948} %write{947,947} %derivs
+temp	float	$tmp552	%read{953,953} %write{950,950} %derivs
+temp	float	$tmp553	%read{952,952} %write{951,951} %derivs
+temp	float	$tmp554	%read{953,953} %write{952,952} %derivs
+temp	float	$tmp555	%read{955,955} %write{953,953} %derivs
+temp	float	$tmp556	%read{955,955} %write{954,954} %derivs
+temp	float	$tmp557	%read{957,957} %write{956,956} %derivs
+temp	float	$tmp558	%read{961,961} %write{957,957} %derivs
+temp	float	$tmp559	%read{961,961} %write{960,960} %derivs
+temp	float	$tmp560	%read{960,960} %write{959,959} %derivs
+temp	float	$tmp561	%read{963,963} %write{961,961} %derivs
+temp	float	$tmp562	%read{968,968} %write{966,966} %derivs
+temp	float	$tmp563	%read{968,968} %write{967,967} %derivs
+temp	float	$tmp564	%read{977,977} %write{972,972} %derivs
+temp	float	$tmp565	%read{972,972} %write{971,971} %derivs
+temp	float	$tmp566	%read{975,975} %write{974,974} %derivs
+temp	float	$tmp567	%read{974,974} %write{973,973} %derivs
+temp	float	$tmp568	%read{976,976} %write{975,975} %derivs
+temp	float	$tmp569	%read{977,977} %write{976,976} %derivs
+temp	float	$tmp570	%read{985,985} %write{980,980} %derivs
+temp	float	$tmp571	%read{980,980} %write{979,979} %derivs
+temp	float	$tmp572	%read{983,983} %write{982,982} %derivs
+temp	float	$tmp573	%read{982,982} %write{981,981} %derivs
+temp	float	$tmp574	%read{984,984} %write{983,983} %derivs
+temp	float	$tmp575	%read{985,985} %write{984,984} %derivs
+temp	float	$tmp576	%read{991,991} %write{989,989} %derivs
+temp	float	$tmp577	%read{991,991} %write{990,990} %derivs
+temp	float	$tmp578	%read{992,992} %write{991,991} %derivs
+temp	float	$tmp579	%read{995,995} %write{993,993} %derivs
+temp	float	$tmp580	%read{995,995} %write{994,994} %derivs
+temp	float	$tmp581	%read{997,997} %write{995,995} %derivs
+temp	float	$tmp582	%read{998,998} %write{997,997} %derivs
+temp	float	$tmp583	%read{1003,1003} %write{1000,1000} %derivs
+temp	float	$tmp584	%read{1002,1002} %write{1001,1001} %derivs
+temp	float	$tmp585	%read{1003,1003} %write{1002,1002} %derivs
+temp	float	$tmp586	%read{1005,1005} %write{1003,1003} %derivs
+temp	float	$tmp587	%read{1005,1005} %write{1004,1004} %derivs
+temp	float	$tmp588	%read{1007,1007} %write{1006,1006} %derivs
+temp	float	$tmp589	%read{1011,1011} %write{1007,1007} %derivs
+temp	float	$tmp590	%read{1011,1011} %write{1010,1010} %derivs
+temp	float	$tmp591	%read{1010,1010} %write{1009,1009} %derivs
+temp	float	$tmp592	%read{1013,1013} %write{1011,1011} %derivs
+temp	float	$tmp593	%read{1018,1018} %write{1016,1016} %derivs
+temp	float	$tmp594	%read{1018,1018} %write{1017,1017} %derivs
+temp	float	$tmp595	%read{1027,1027} %write{1022,1022} %derivs
+temp	float	$tmp596	%read{1022,1022} %write{1021,1021} %derivs
+temp	float	$tmp597	%read{1025,1025} %write{1024,1024} %derivs
+temp	float	$tmp598	%read{1024,1024} %write{1023,1023} %derivs
+temp	float	$tmp599	%read{1026,1026} %write{1025,1025} %derivs
+temp	float	$tmp600	%read{1027,1027} %write{1026,1026} %derivs
+temp	float	$tmp601	%read{1035,1035} %write{1030,1030} %derivs
+temp	float	$tmp602	%read{1030,1030} %write{1029,1029} %derivs
+temp	float	$tmp603	%read{1033,1033} %write{1032,1032} %derivs
+temp	float	$tmp604	%read{1032,1032} %write{1031,1031} %derivs
+temp	float	$tmp605	%read{1034,1034} %write{1033,1033} %derivs
+temp	float	$tmp606	%read{1035,1035} %write{1034,1034} %derivs
+temp	color	$tmp607	%read{1038,1038} %write{1037,1037}
+temp	color	$tmp609	%read{1039,1039} %write{1038,1038}
+temp	float	$tmp611	%read{1048,1048} %write{1047,1047}
+const	string	$const42	"RayleighPhaseFunction"		%read{1043,1043} %write{2147483647,-1}
+const	float	$const43	0.0596831031		%read{1044,1044} %write{2147483647,-1}
+temp	float	$tmp612	%read{1046,1046} %write{1045,1045}
+temp	float	$tmp613	%read{1047,1047} %write{1046,1046}
+temp	color	$tmp614	%read{1067,1067} %write{1048,1048}
+temp	float	$tmp615	%read{1066,1066} %write{1065,1065}
+const	string	$const44	"MiePhaseFunction"		%read{1049,1049} %write{2147483647,-1}
+const	float	$const45	0.119366206		%read{1052,1052} %write{2147483647,-1}
+temp	float	$tmp616	%read{1051,1051} %write{1050,1050}
+temp	float	$tmp617	%read{1052,1052} %write{1051,1051}
+temp	float	$tmp618	%read{1055,1055} %write{1052,1052}
+temp	float	$tmp619	%read{1054,1054} %write{1053,1053}
+temp	float	$tmp620	%read{1055,1055} %write{1054,1054}
+temp	float	$tmp621	%read{1057,1057} %write{1056,1056}
+temp	float	$tmp622	%read{1058,1058} %write{1057,1057}
+temp	float	$tmp623	%read{1065,1065} %write{1058,1058}
+temp	float	$tmp624	%read{1065,1065} %write{1064,1064}
+temp	float	$tmp625	%read{1060,1060} %write{1059,1059}
+temp	float	$tmp626	%read{1063,1063} %write{1060,1060}
+temp	float	$tmp627	%read{1062,1062} %write{1061,1061}
+temp	float	$tmp628	%read{1063,1063} %write{1062,1062}
+temp	float	$tmp629	%read{1064,1064} %write{1063,1063}
+const	float	$const46	1.5		%read{1064,1064} %write{2147483647,-1}
+temp	color	$tmp630	%read{1067,1067} %write{1066,1066}
+temp	vector	$tmp631	%read{1072,1072} %write{1071,1071}
+temp	float	$tmp632	%read{1074,1074} %write{1073,1073}
+temp	int	$tmp633	%read{1075,1075} %write{1074,1074}
+const	float	$const47	3.14159274		%read{1076,1093} %write{2147483647,-1}
+temp	float	$tmp634	%read{1077,1077} %write{1076,1076}
+temp	float	$tmp635	%read{1078,1078} %write{1077,1077}
+temp	color	$tmp636	%read{1080,1080} %write{1079,1079}
+temp	color	$tmp637	%read{1081,1081} %write{1080,1080}
+const	int	$const48	4		%read{1082,1082} %write{2147483647,-1}
+temp	int	$tmp638	%read{1083,1083} %write{1082,1082}
+const	int	$const49	6		%read{1086,1086} %write{2147483647,-1}
+temp	int	$tmp639	%read{1087,1087} %write{1086,1086}
+temp	vector	$tmp640	%read{1089,1089} %write{1088,1088}
+temp	float	$tmp641	%read{1091,1091} %write{1090,1090}
+temp	int	$tmp642	%read{1092,1092} %write{1091,1091}
+temp	float	$tmp643	%read{1094,1094} %write{1093,1093}
+temp	float	$tmp644	%read{1095,1095} %write{1094,1094}
+const	float	$const50	10000		%read{1096,1096} %write{2147483647,-1}
+code ___main___
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:466
+#     
+	neg		$tmp1 I 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{466} %argrw{"wr"}
+	normalize	view_ray $tmp1 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:469
+#         float cos_sun_angle = dot(view_ray, normalize(sun_direction));
+	eq		$tmp2 debug_mode $const1 	%line{469} %argrw{"wrr"}
+	if		$tmp2 16 16 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:470
+#         float sun_threshold = cos(sun_angular_radius);
+	normalize	$tmp3 sun_direction 	%line{470} %argrw{"wr"}
+	dot		___400_cos_sun_angle view_ray $tmp3 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:471
+#         if (cos_sun_angle > sun_threshold) {
+	cos		___400_sun_threshold sun_angular_radius 	%line{471} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:472
+#             Sky = color(1000.0);  // Very bright sun
+	gt		$tmp4 ___400_cos_sun_angle ___400_sun_threshold 	%line{472} %argrw{"wrr"}
+	if		$tmp4 10 15 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:473
+#         } else if (cos_sun_angle > sun_threshold - 0.01) {
+	assign		Sky $const2 	%line{473} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:474
+#             Sky = color(1.0, 0.5, 0.0);  // Orange ring around sun
+	sub		$tmp5 ___400_sun_threshold $const3 	%line{474} %argrw{"wrr"}
+	gt		$tmp6 ___400_cos_sun_angle $tmp5 	%argrw{"wrr"}
+	if		$tmp6 14 15 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:475
+#         } else {
+	assign		Sky $const4 	%line{475} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:477
+#         }
+	assign		Sky $const5 	%line{477} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:479
+#     }
+	exit	%line{479}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:483
+#         Sky = color(view_ray[0] * 0.5 + 0.5, view_ray[1] * 0.5 + 0.5, view_ray[2] * 0.5 + 0.5);
+	eq		$tmp7 debug_mode $const6 	%line{483} %argrw{"wrr"}
+	if		$tmp7 29 29 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:484
+#         return;
+	compref		$tmp8 view_ray $const7 	%line{484} %argrw{"wrr"}
+	mul		$tmp9 $tmp8 $const8 	%argrw{"wrr"}
+	add		$tmp10 $tmp9 $const8 	%argrw{"wrr"}
+	compref		$tmp11 view_ray $const6 	%argrw{"wrr"}
+	mul		$tmp12 $tmp11 $const8 	%argrw{"wrr"}
+	add		$tmp13 $tmp12 $const8 	%argrw{"wrr"}
+	compref		$tmp14 view_ray $const9 	%argrw{"wrr"}
+	mul		$tmp15 $tmp14 $const8 	%argrw{"wrr"}
+	add		$tmp16 $tmp15 $const8 	%argrw{"wrr"}
+	color		Sky $tmp10 $tmp13 $tmp16 	%argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:485
+#     }
+	exit	%line{485}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:489
+#         float u = view_ray[0] * 0.5 + 0.5;
+	eq		$tmp17 debug_mode $const9 	%line{489} %argrw{"wrr"}
+	if		$tmp17 39 39 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:490
+#         float v = view_ray[2] * 0.5 + 0.5;
+	compref		$tmp18 view_ray $const7 	%line{490} %argrw{"wrr"}
+	mul		$tmp19 $tmp18 $const8 	%argrw{"wrr"}
+	add		___405_u $tmp19 $const8 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:491
+#         Sky = texture(transmittance_texture, u, v);
+	compref		$tmp20 view_ray $const9 	%line{491} %argrw{"wrr"}
+	mul		$tmp21 $tmp20 $const8 	%argrw{"wrr"}
+	add		___405_v $tmp21 $const8 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:492
+#         return;
+	texture		Sky transmittance_texture ___405_u ___405_v 	%line{492} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:493
+#     }
+	exit	%line{493}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:497
+#         float u = view_ray[0] * 0.5 + 0.5;
+	eq		$tmp22 debug_mode $const10 	%line{497} %argrw{"wrr"}
+	if		$tmp22 50 50 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:498
+#         float v = view_ray[2] * 0.5 + 0.5;
+	compref		$tmp23 view_ray $const7 	%line{498} %argrw{"wrr"}
+	mul		$tmp24 $tmp23 $const8 	%argrw{"wrr"}
+	add		___406_u $tmp24 $const8 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:499
+#         Sky = texture(scattering_texture, u * 0.03125, v);  // First slice only
+	compref		$tmp25 view_ray $const9 	%line{499} %argrw{"wrr"}
+	mul		$tmp26 $tmp25 $const8 	%argrw{"wrr"}
+	add		___406_v $tmp26 $const8 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:500
+#         return;
+	mul		$tmp27 ___406_u $const11 	%line{500} %argrw{"wrr"}
+	texture		Sky scattering_texture $tmp27 ___406_v 	%argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:501
+#     }
+	exit	%line{501}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:505
+#     
+	assign		cam camera_position 	%line{505} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:516
+#         bottom_radius,
+	normalize	$tmp28 sun_direction 	%line{516} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:509
+#         transmittance_texture,
+	functioncall	$const13 1069 	%line{509} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:358
+#     
+	assign		___395_camera cam 	%line{358} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:360
+#     float rmu = dot(camera, view_ray);
+	length		___395_r ___395_camera 	%line{360} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:361
+#     float distance_to_top = -rmu - sqrt(rmu * rmu - r * r + top_radius * top_radius);
+	dot		___395_rmu ___395_camera view_ray 	%line{361} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:362
+#     
+	neg		$tmp29 ___395_rmu 	%line{362} %argrw{"wr"}
+	mul		$tmp31 ___395_rmu ___395_rmu 	%argrw{"wrr"}
+	mul		$tmp32 ___395_r ___395_r 	%argrw{"wrr"}
+	sub		$tmp33 $tmp31 $tmp32 	%argrw{"wrr"}
+	mul		$tmp34 top_radius top_radius 	%argrw{"wrr"}
+	add		$tmp35 $tmp33 $tmp34 	%argrw{"wrr"}
+	sqrt		$tmp30 $tmp35 	%argrw{"wr"}
+	sub		___395_distance_to_top $tmp29 $tmp30 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:365
+#         camera = camera + view_ray * distance_to_top;
+	gt		$tmp36 ___395_distance_to_top $const12 	%line{365} %argrw{"wrr"}
+	if		$tmp36 70 75 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:366
+#         r = top_radius;
+	mul		$tmp37 view_ray ___395_distance_to_top 	%line{366} %argrw{"wrr"}
+	add		___395_camera ___395_camera $tmp37 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:367
+#         rmu = rmu + distance_to_top;
+	assign		___395_r top_radius 	%line{367} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:368
+#     } else if (r > top_radius) {
+	add		___395_rmu ___395_rmu ___395_distance_to_top 	%line{368} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:369
+#         // Ray doesn't intersect atmosphere
+	gt		$tmp38 ___395_r top_radius 	%line{369} %argrw{"wrr"}
+	if		$tmp38 75 75 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:371
+#         return color(0.0);
+	assign		transmittance_out $const14 	%line{371} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:372
+#     }
+	assign		radiance $const15 	%line{372} %argrw{"wr"}
+	return
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:375
+#     float mu_s = dot(camera, sun_direction) / r;
+	div		___395_mu ___395_rmu ___395_r 	%line{375} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:376
+#     float nu = dot(view_ray, sun_direction);
+	dot		$tmp39 ___395_camera $tmp28 	%line{376} %argrw{"wrr"}
+	div		___395_mu_s $tmp39 ___395_r 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:377
+#     int ray_intersects_ground = RayIntersectsGround(r, mu, bottom_radius);
+	dot		___395_nu view_ray $tmp28 	%line{377} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:378
+#     
+	functioncall	$const16 96 	%line{378} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:80
+#             bottom_radius * bottom_radius >= 0.0) ? 1 : 0;
+	lt		$tmp40 ___395_mu $const12 	%line{80} %argrw{"wrr"}
+	neq		$tmp41 $tmp40 $const7 	%argrw{"wrr"}
+	if		$tmp41 92 92 	%argrw{"r"}
+	mul		$tmp42 ___395_r ___395_r 	%argrw{"wrr"}
+	mul		$tmp43 ___395_mu ___395_mu 	%argrw{"wrr"}
+	sub		$tmp44 $tmp43 $const17 	%argrw{"wrr"}
+	mul		$tmp45 $tmp42 $tmp44 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:81
+# }
+	mul		$tmp46 bottom_radius bottom_radius 	%line{81} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:80
+#             bottom_radius * bottom_radius >= 0.0) ? 1 : 0;
+	add		$tmp47 $tmp45 $tmp46 	%line{80} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:81
+# }
+	ge		$tmp48 $tmp47 $const12 	%line{81} %argrw{"wrr"}
+	neq		$tmp49 $tmp48 $const7 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:80
+#             bottom_radius * bottom_radius >= 0.0) ? 1 : 0;
+	assign		$tmp41 $tmp49 	%line{80} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:81
+# }
+	if		$tmp41 94 95 	%line{81} %argrw{"r"}
+	assign		___395_ray_intersects_ground $const6 	%argrw{"wr"}
+	assign		___395_ray_intersects_ground $const7 	%argrw{"wr"}
+	return
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:380
+#         GetTransmittanceToTopAtmosphereBoundary(
+	if		___395_ray_intersects_ground 98 148 	%line{380} %argrw{"r"}
+	assign		transmittance_out $const15 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:381
+#             transmittance_texture, r, mu, bottom_radius, top_radius);
+	functioncall	$const18 148 	%line{381} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:126
+#     return texture(transmittance_texture, u, v);
+	functioncall	$const19 147 	%line{126} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:109
+#     float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+	mul		$tmp50 top_radius top_radius 	%line{109} %argrw{"wrr"}
+	mul		$tmp51 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp52 $tmp50 $tmp51 	%argrw{"wrr"}
+	sqrt		___379_H $tmp52 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:110
+#     float d = DistanceToTopAtmosphereBoundary(r, mu, top_radius);
+	mul		$tmp53 ___395_r ___395_r 	%line{110} %argrw{"wrr"}
+	mul		$tmp54 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp55 $tmp53 $tmp54 	%argrw{"wrr"}
+	functioncall	$const20 110 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp56 $tmp55 $const12 	%line{53} %argrw{"wrr"}
+	sqrt		___379_rho $tmp56 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:111
+#     float d_min = top_radius - r;
+	functioncall	$const21 125 	%line{111} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:70
+#     return ClampDistance(-r * mu + SafeSqrt(discriminant));
+	mul		$tmp57 ___395_r ___395_r 	%line{70} %argrw{"wrr"}
+	mul		$tmp58 ___395_mu ___395_mu 	%argrw{"wrr"}
+	sub		$tmp59 $tmp58 $const17 	%argrw{"wrr"}
+	mul		$tmp60 $tmp57 $tmp59 	%argrw{"wrr"}
+	mul		$tmp61 top_radius top_radius 	%argrw{"wrr"}
+	add		___374_discriminant $tmp60 $tmp61 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	neg		$tmp62 ___395_r 	%line{71} %argrw{"wr"}
+	mul		$tmp63 $tmp62 ___395_mu 	%argrw{"wrr"}
+	functioncall	$const20 122 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp65 ___374_discriminant $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp64 $tmp65 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	add		$tmp66 $tmp63 $tmp64 	%line{71} %argrw{"wrr"}
+	functioncall	$const22 125 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:45
+# }
+	max		___379_d $tmp66 $const12 	%line{45} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:112
+#     float d_max = rho + H;
+	sub		___379_d_min top_radius ___395_r 	%line{112} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:113
+#     float x_mu = (d - d_min) / (d_max - d_min);
+	add		___379_d_max ___379_rho ___379_H 	%line{113} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:114
+#     float x_r = rho / H;
+	sub		$tmp67 ___379_d ___379_d_min 	%line{114} %argrw{"wrr"}
+	sub		$tmp68 ___379_d_max ___379_d_min 	%argrw{"wrr"}
+	div		___379_x_mu $tmp67 $tmp68 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:115
+#     u = GetTextureCoordFromUnitRange(x_mu, TRANSMITTANCE_TEXTURE_WIDTH);
+	div		___379_x_r ___379_rho ___379_H 	%line{115} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:116
+#     v = GetTextureCoordFromUnitRange(x_r, TRANSMITTANCE_TEXTURE_HEIGHT);
+	functioncall	$const24 139 	%line{116} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp70 $const23 	%line{57} %argrw{"wr"}
+	div		$tmp69 $const8 $tmp70 	%argrw{"wrr"}
+	assign		$tmp72 $const23 	%argrw{"wr"}
+	div		$tmp71 $const17 $tmp72 	%argrw{"wrr"}
+	sub		$tmp73 $const17 $tmp71 	%argrw{"wrr"}
+	mul		$tmp74 ___379_x_mu $tmp73 	%argrw{"wrr"}
+	add		___380_u $tmp69 $tmp74 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:117
+# }
+	functioncall	$const24 147 	%line{117} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp76 $const25 	%line{57} %argrw{"wr"}
+	div		$tmp75 $const8 $tmp76 	%argrw{"wrr"}
+	assign		$tmp78 $const25 	%argrw{"wr"}
+	div		$tmp77 $const17 $tmp78 	%argrw{"wrr"}
+	sub		$tmp79 $const17 $tmp77 	%argrw{"wrr"}
+	mul		$tmp80 ___379_x_r $tmp79 	%argrw{"wrr"}
+	add		___380_v $tmp75 $tmp80 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:127
+# }
+	texture		transmittance_out transmittance_texture ___380_u ___380_v 	%line{127} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:387
+#         GetCombinedScattering(
+	eq		$tmp81 $const12 $const12 	%line{387} %argrw{"wrr"}
+	if		$tmp81 470 1043 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:388
+#             scattering_texture, single_mie_scattering_texture,
+	functioncall	$const26 470 	%line{388} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:286
+#         r, mu, mu_s, nu, ray_r_mu_intersects_ground,
+	functioncall	$const27 276 	%line{286} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:166
+#     float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+	mul		$tmp82 top_radius top_radius 	%line{166} %argrw{"wrr"}
+	mul		$tmp83 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp84 $tmp82 $tmp83 	%argrw{"wrr"}
+	sqrt		___384_H $tmp84 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:167
+#     u_r = GetTextureCoordFromUnitRange(rho / H, SCATTERING_TEXTURE_R_SIZE);
+	mul		$tmp85 ___395_r ___395_r 	%line{167} %argrw{"wrr"}
+	mul		$tmp86 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp87 $tmp85 $tmp86 	%argrw{"wrr"}
+	functioncall	$const20 162 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp88 $tmp87 $const12 	%line{53} %argrw{"wrr"}
+	sqrt		___384_rho $tmp88 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:168
+# 
+	div		$tmp89 ___384_rho ___384_H 	%line{168} %argrw{"wrr"}
+	functioncall	$const24 171 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp91 $const28 	%line{57} %argrw{"wr"}
+	div		$tmp90 $const8 $tmp91 	%argrw{"wrr"}
+	assign		$tmp93 $const28 	%argrw{"wr"}
+	div		$tmp92 $const17 $tmp93 	%argrw{"wrr"}
+	sub		$tmp94 $const17 $tmp92 	%argrw{"wrr"}
+	mul		$tmp95 $tmp89 $tmp94 	%argrw{"wrr"}
+	add		___391_u_r $tmp90 $tmp95 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:170
+#     float discriminant = r_mu * r_mu - r * r + bottom_radius * bottom_radius;
+	mul		___384_r_mu ___395_r ___395_mu 	%line{170} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:171
+#     
+	mul		$tmp96 ___384_r_mu ___384_r_mu 	%line{171} %argrw{"wrr"}
+	mul		$tmp97 ___395_r ___395_r 	%argrw{"wrr"}
+	sub		$tmp98 $tmp96 $tmp97 	%argrw{"wrr"}
+	mul		$tmp99 bottom_radius bottom_radius 	%argrw{"wrr"}
+	add		___384_discriminant $tmp98 $tmp99 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:173
+#         float d = -r_mu - SafeSqrt(discriminant);
+	if		___395_ray_intersects_ground 201 223 	%line{173} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:174
+#         float d_min = r - bottom_radius;
+	neg		$tmp100 ___384_r_mu 	%line{174} %argrw{"wr"}
+	functioncall	$const20 182 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp102 ___384_discriminant $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp101 $tmp102 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:174
+#         float d_min = r - bottom_radius;
+	sub		___385_d $tmp100 $tmp101 	%line{174} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:175
+#         float d_max = rho;
+	sub		___385_d_min ___395_r bottom_radius 	%line{175} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:176
+#         u_mu = 0.5 - 0.5 * GetTextureCoordFromUnitRange(
+	assign		___385_d_max ___384_rho 	%line{176} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:178
+#             SCATTERING_TEXTURE_MU_SIZE / 2);
+	eq		$tmp105 ___385_d_max ___385_d_min 	%line{178} %argrw{"wrr"}
+	if		$tmp105 188 191 	%argrw{"r"}
+	assign		$tmp104 $const12 	%argrw{"wr"}
+	sub		$tmp106 ___385_d ___385_d_min 	%argrw{"wrr"}
+	sub		$tmp107 ___385_d_max ___385_d_min 	%argrw{"wrr"}
+	div		$tmp104 $tmp106 $tmp107 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:177
+#             d_max == d_min ? 0.0 : (d - d_min) / (d_max - d_min), 
+	functioncall	$const24 199 	%line{177} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp109 $const25 	%line{57} %argrw{"wr"}
+	div		$tmp108 $const8 $tmp109 	%argrw{"wrr"}
+	assign		$tmp111 $const25 	%argrw{"wr"}
+	div		$tmp110 $const17 $tmp111 	%argrw{"wrr"}
+	sub		$tmp112 $const17 $tmp110 	%argrw{"wrr"}
+	mul		$tmp113 $tmp104 $tmp112 	%argrw{"wrr"}
+	add		$tmp103 $tmp108 $tmp113 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:177
+#             d_max == d_min ? 0.0 : (d - d_min) / (d_max - d_min), 
+	mul		$tmp114 $const8 $tmp103 	%line{177} %argrw{"wrr"}
+	sub		___391_u_mu $const8 $tmp114 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:181
+#         float d_min = top_radius - r;
+	neg		$tmp115 ___384_r_mu 	%line{181} %argrw{"wr"}
+	mul		$tmp117 ___384_H ___384_H 	%argrw{"wrr"}
+	add		$tmp118 ___384_discriminant $tmp117 	%argrw{"wrr"}
+	functioncall	$const20 207 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp119 $tmp118 $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp116 $tmp119 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:181
+#         float d_min = top_radius - r;
+	add		___386_d $tmp115 $tmp116 	%line{181} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:182
+#         float d_max = rho + H;
+	sub		___386_d_min top_radius ___395_r 	%line{182} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:183
+#         u_mu = 0.5 + 0.5 * GetTextureCoordFromUnitRange(
+	add		___386_d_max ___384_rho ___384_H 	%line{183} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:185
+#             SCATTERING_TEXTURE_MU_SIZE / 2);
+	sub		$tmp121 ___386_d ___386_d_min 	%line{185} %argrw{"wrr"}
+	sub		$tmp122 ___386_d_max ___386_d_min 	%argrw{"wrr"}
+	div		$tmp123 $tmp121 $tmp122 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:184
+#             (d - d_min) / (d_max - d_min), 
+	functioncall	$const24 221 	%line{184} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp125 $const25 	%line{57} %argrw{"wr"}
+	div		$tmp124 $const8 $tmp125 	%argrw{"wrr"}
+	assign		$tmp127 $const25 	%argrw{"wr"}
+	div		$tmp126 $const17 $tmp127 	%argrw{"wrr"}
+	sub		$tmp128 $const17 $tmp126 	%argrw{"wrr"}
+	mul		$tmp129 $tmp123 $tmp128 	%argrw{"wrr"}
+	add		$tmp120 $tmp124 $tmp129 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:184
+#             (d - d_min) / (d_max - d_min), 
+	mul		$tmp130 $const8 $tmp120 	%line{184} %argrw{"wrr"}
+	add		___391_u_mu $const8 $tmp130 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:189
+#     float d_min = top_radius - bottom_radius;
+	functioncall	$const21 238 	%line{189} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:70
+#     return ClampDistance(-r * mu + SafeSqrt(discriminant));
+	mul		$tmp131 bottom_radius bottom_radius 	%line{70} %argrw{"wrr"}
+	mul		$tmp132 ___395_mu_s ___395_mu_s 	%argrw{"wrr"}
+	sub		$tmp133 $tmp132 $const17 	%argrw{"wrr"}
+	mul		$tmp134 $tmp131 $tmp133 	%argrw{"wrr"}
+	mul		$tmp135 top_radius top_radius 	%argrw{"wrr"}
+	add		___374_discriminant $tmp134 $tmp135 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	neg		$tmp136 bottom_radius 	%line{71} %argrw{"wr"}
+	mul		$tmp137 $tmp136 ___395_mu_s 	%argrw{"wrr"}
+	functioncall	$const20 235 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp139 ___374_discriminant $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp138 $tmp139 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	add		$tmp140 $tmp137 $tmp138 	%line{71} %argrw{"wrr"}
+	functioncall	$const22 238 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:45
+# }
+	max		___384_d $tmp140 $const12 	%line{45} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:190
+#     float d_max = H;
+	sub		___384_d_min top_radius bottom_radius 	%line{190} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:191
+#     float a = (d - d_min) / (d_max - d_min);
+	assign		___384_d_max ___384_H 	%line{191} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:192
+#     float D = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s_min, top_radius);
+	sub		$tmp141 ___384_d ___384_d_min 	%line{192} %argrw{"wrr"}
+	sub		$tmp142 ___384_d_max ___384_d_min 	%argrw{"wrr"}
+	div		___384_a $tmp141 $tmp142 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:193
+#     float A = (D - d_min) / (d_max - d_min);
+	functioncall	$const21 258 	%line{193} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:70
+#     return ClampDistance(-r * mu + SafeSqrt(discriminant));
+	mul		$tmp143 bottom_radius bottom_radius 	%line{70} %argrw{"wrr"}
+	mul		$tmp144 mu_s_min mu_s_min 	%argrw{"wrr"}
+	sub		$tmp145 $tmp144 $const17 	%argrw{"wrr"}
+	mul		$tmp146 $tmp143 $tmp145 	%argrw{"wrr"}
+	mul		$tmp147 top_radius top_radius 	%argrw{"wrr"}
+	add		___374_discriminant $tmp146 $tmp147 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	neg		$tmp148 bottom_radius 	%line{71} %argrw{"wr"}
+	mul		$tmp149 $tmp148 mu_s_min 	%argrw{"wrr"}
+	functioncall	$const20 255 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp151 ___374_discriminant $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp150 $tmp151 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	add		$tmp152 $tmp149 $tmp150 	%line{71} %argrw{"wrr"}
+	functioncall	$const22 258 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:45
+# }
+	max		___384_D $tmp152 $const12 	%line{45} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:194
+#     u_mu_s = GetTextureCoordFromUnitRange(
+	sub		$tmp153 ___384_D ___384_d_min 	%line{194} %argrw{"wrr"}
+	sub		$tmp154 ___384_d_max ___384_d_min 	%argrw{"wrr"}
+	div		___384_A $tmp153 $tmp154 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:196
+# 
+	div		$tmp156 ___384_a ___384_A 	%line{196} %argrw{"wrr"}
+	sub		$tmp157 $const17 $tmp156 	%argrw{"wrr"}
+	max		$tmp155 $tmp157 $const12 	%argrw{"wrr"}
+	add		$tmp158 $const17 ___384_a 	%argrw{"wrr"}
+	div		$tmp159 $tmp155 $tmp158 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:195
+#         max(1.0 - a / A, 0.0) / (1.0 + a), SCATTERING_TEXTURE_MU_S_SIZE);
+	functioncall	$const24 274 	%line{195} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp161 $const28 	%line{57} %argrw{"wr"}
+	div		$tmp160 $const8 $tmp161 	%argrw{"wrr"}
+	assign		$tmp163 $const28 	%argrw{"wr"}
+	div		$tmp162 $const17 $tmp163 	%argrw{"wrr"}
+	sub		$tmp164 $const17 $tmp162 	%argrw{"wrr"}
+	mul		$tmp165 $tmp159 $tmp164 	%argrw{"wrr"}
+	add		___391_u_mu_s $tmp160 $tmp165 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:198
+# }
+	add		$tmp166 ___395_nu $const17 	%line{198} %argrw{"wrr"}
+	div		___391_u_nu $tmp166 $const29 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:291
+#     float tex_x = floor(tex_coord_x);
+	mul		___391_tex_coord_x ___391_u_nu $const31 	%line{291} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:292
+#     float lerp_factor = tex_coord_x - tex_x;
+	floor		___391_tex_x ___391_tex_coord_x 	%line{292} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:293
+#     
+	sub		___391_lerp_factor ___391_tex_coord_x ___391_tex_x 	%line{293} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:295
+#     float uvw1_x = (tex_x + 1.0 + u_mu_s) / SCATTERING_TEXTURE_NU_SIZE;
+	add		$tmp167 ___391_tex_x ___391_u_mu_s 	%line{295} %argrw{"wrr"}
+	div		___391_uvw0_x $tmp167 $const33 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:296
+#     
+	add		$tmp168 ___391_tex_x $const17 	%line{296} %argrw{"wrr"}
+	add		$tmp169 $tmp168 ___391_u_mu_s 	%argrw{"wrr"}
+	div		___391_uvw1_x $tmp169 $const33 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:298
+#         // Combined mode: RGB = Rayleigh + multiple, A = single Mie red
+	if		use_combined_textures 358 470 	%line{298} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:300
+#         color s1 = GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r);
+	functioncall	$const34 311 	%line{300} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 290 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp170 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp170 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp171 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp172 $tmp171 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp172 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp173 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp173 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp174 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp175 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp174 $tmp175 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp176 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp176 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp177 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp177 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp179 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp178 $tmp179 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp178 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp181 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp180 $tmp181 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp180 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		___392_s0 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:301
+#         color combined = s0 * (1.0 - lerp_factor) + s1 * lerp_factor;
+	functioncall	$const34 337 	%line{301} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 316 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp182 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp182 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp183 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp184 $tmp183 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp184 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp185 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp185 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp186 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp187 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp186 $tmp187 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp188 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp188 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp189 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp189 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp191 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp190 $tmp191 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp190 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp193 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp192 $tmp193 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp192 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		___392_s1 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:302
+#         
+	sub		$tmp194 $const17 ___391_lerp_factor 	%line{302} %argrw{"wrr"}
+	mul		$tmp195 ___392_s0 $tmp194 	%argrw{"wrr"}
+	mul		$tmp196 ___392_s1 ___391_lerp_factor 	%argrw{"wrr"}
+	add		___392_combined $tmp195 $tmp196 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:304
+#         // For combined textures, alpha channel contains single mie red component
+	assign		___395_scattering_result ___392_combined 	%line{304} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:308
+#     } else {
+	compref		$tmp197 ___392_combined $const7 	%line{308} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:307
+#             combined, combined[0], rayleigh_scattering, mie_scattering);
+	functioncall	$const36 358 	%line{307} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:266
+#         return color(0.0);
+	compref		$tmp198 ___392_combined $const7 	%line{266} %argrw{"wrr"}
+	le		$tmp199 $tmp198 $const12 	%argrw{"wrr"}
+	if		$tmp199 349 349 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:267
+#     }
+	assign		___395_single_mie $const15 	%line{267} %argrw{"wr"}
+	return
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:269
+#            (rayleigh_scattering[0] / mie_scattering[0]) *
+	mul		$tmp200 ___392_combined $tmp197 	%line{269} %argrw{"wrr"}
+	compref		$tmp201 ___392_combined $const7 	%argrw{"wrr"}
+	div		$tmp202 $tmp200 $tmp201 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:270
+#            (mie_scattering / rayleigh_scattering);
+	compref		$tmp203 rayleigh_scattering $const7 	%line{270} %argrw{"wrr"}
+	compref		$tmp204 mie_scattering $const7 	%argrw{"wrr"}
+	div		$tmp205 $tmp203 $tmp204 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:269
+#            (rayleigh_scattering[0] / mie_scattering[0]) *
+	mul		$tmp206 $tmp202 $tmp205 	%line{269} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:271
+# }
+	div		$tmp207 mie_scattering rayleigh_scattering 	%line{271} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:270
+#            (mie_scattering / rayleigh_scattering);
+	mul		___395_single_mie $tmp206 $tmp207 	%line{270} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:311
+#                      GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	functioncall	$const34 384 	%line{311} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 363 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp209 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp209 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp210 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp211 $tmp210 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp211 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp212 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp212 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp213 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp214 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp213 $tmp214 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp215 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp215 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp216 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp216 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp218 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp217 $tmp218 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp217 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp220 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp219 $tmp220 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp219 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		$tmp208 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:311
+#                      GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	sub		$tmp221 $const17 ___391_lerp_factor 	%line{311} %argrw{"wrr"}
+	mul		$tmp222 $tmp208 $tmp221 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:312
+#         single_mie_scattering = GetScatteringTiled2D(single_mie_scattering_texture, uvw0_x, u_mu, u_r) * (1.0 - lerp_factor) +
+	functioncall	$const34 412 	%line{312} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 391 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp224 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp224 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp225 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp226 $tmp225 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp226 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp227 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp227 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp228 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp229 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp228 $tmp229 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp230 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp230 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp231 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp231 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp233 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp232 $tmp233 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp232 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp235 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp234 $tmp235 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp234 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		$tmp223 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:312
+#         single_mie_scattering = GetScatteringTiled2D(single_mie_scattering_texture, uvw0_x, u_mu, u_r) * (1.0 - lerp_factor) +
+	mul		$tmp236 $tmp223 ___391_lerp_factor 	%line{312} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:311
+#                      GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	add		___395_scattering_result $tmp222 $tmp236 	%line{311} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:313
+#                                 GetScatteringTiled2D(single_mie_scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	functioncall	$const34 440 	%line{313} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 419 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp238 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp238 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp239 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp240 $tmp239 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp240 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp241 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp241 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp242 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp243 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp242 $tmp243 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp244 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp244 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp245 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp245 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp247 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp246 $tmp247 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp246 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp249 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp248 $tmp249 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp248 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 single_mie_scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 single_mie_scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		$tmp237 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:313
+#                                 GetScatteringTiled2D(single_mie_scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	sub		$tmp250 $const17 ___391_lerp_factor 	%line{313} %argrw{"wrr"}
+	mul		$tmp251 $tmp237 $tmp250 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:314
+#     }
+	functioncall	$const34 468 	%line{314} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 447 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp253 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp253 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp254 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp255 $tmp254 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp255 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp256 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp256 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp257 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp258 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp257 $tmp258 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp259 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp259 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp260 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp260 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp262 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp261 $tmp262 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp261 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp264 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp263 $tmp264 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp263 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 single_mie_scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 single_mie_scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		$tmp252 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:314
+#     }
+	mul		$tmp265 $tmp252 ___391_lerp_factor 	%line{314} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:313
+#                                 GetScatteringTiled2D(single_mie_scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	add		___395_single_mie $tmp251 $tmp265 	%line{313} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:397
+#         float r_p = ClampRadius(sqrt(d * d + 2.0 * r * mu * d + r * r),
+	assign		___399_d $const12 	%line{397} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:398
+#                                 bottom_radius, top_radius);
+	mul		$tmp267 ___399_d ___399_d 	%line{398} %argrw{"wrr"}
+	mul		$tmp268 $const29 ___395_r 	%argrw{"wrr"}
+	mul		$tmp269 $tmp268 ___395_mu 	%argrw{"wrr"}
+	mul		$tmp270 $tmp269 ___399_d 	%argrw{"wrr"}
+	add		$tmp271 $tmp267 $tmp270 	%argrw{"wrr"}
+	mul		$tmp272 ___395_r ___395_r 	%argrw{"wrr"}
+	add		$tmp273 $tmp271 $tmp272 	%argrw{"wrr"}
+	sqrt		$tmp266 $tmp273 	%argrw{"wr"}
+	functioncall	$const37 483 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:49
+# }
+	functioncall	$const35 483 	%line{49} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp274 $tmp266 top_radius 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___399_r_p $tmp274 bottom_radius 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:400
+#         float mu_s_p = (r * mu_s + d * nu) / r_p;
+	mul		$tmp275 ___395_r ___395_mu 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{400} %argrw{"wrr"}
+	add		$tmp276 $tmp275 ___399_d 	%argrw{"wrr"}
+	div		___399_mu_p $tmp276 ___399_r_p 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:401
+#         
+	mul		$tmp277 ___395_r ___395_mu_s 	%line{401} %argrw{"wrr"}
+	mul		$tmp278 ___399_d ___395_nu 	%argrw{"wrr"}
+	add		$tmp279 $tmp277 $tmp278 	%argrw{"wrr"}
+	div		___399_mu_s_p $tmp279 ___399_r_p 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:403
+#             scattering_texture, single_mie_scattering_texture,
+	functioncall	$const26 810 	%line{403} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:286
+#         r, mu, mu_s, nu, ray_r_mu_intersects_ground,
+	functioncall	$const27 616 	%line{286} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:166
+#     float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+	mul		$tmp280 top_radius top_radius 	%line{166} %argrw{"wrr"}
+	mul		$tmp281 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp282 $tmp280 $tmp281 	%argrw{"wrr"}
+	sqrt		___384_H $tmp282 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:167
+#     u_r = GetTextureCoordFromUnitRange(rho / H, SCATTERING_TEXTURE_R_SIZE);
+	mul		$tmp283 ___399_r_p ___399_r_p 	%line{167} %argrw{"wrr"}
+	mul		$tmp284 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp285 $tmp283 $tmp284 	%argrw{"wrr"}
+	functioncall	$const20 502 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp286 $tmp285 $const12 	%line{53} %argrw{"wrr"}
+	sqrt		___384_rho $tmp286 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:168
+# 
+	div		$tmp287 ___384_rho ___384_H 	%line{168} %argrw{"wrr"}
+	functioncall	$const24 511 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp289 $const28 	%line{57} %argrw{"wr"}
+	div		$tmp288 $const8 $tmp289 	%argrw{"wrr"}
+	assign		$tmp291 $const28 	%argrw{"wr"}
+	div		$tmp290 $const17 $tmp291 	%argrw{"wrr"}
+	sub		$tmp292 $const17 $tmp290 	%argrw{"wrr"}
+	mul		$tmp293 $tmp287 $tmp292 	%argrw{"wrr"}
+	add		___391_u_r $tmp288 $tmp293 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:170
+#     float discriminant = r_mu * r_mu - r * r + bottom_radius * bottom_radius;
+	mul		___384_r_mu ___399_r_p ___399_mu_p 	%line{170} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:171
+#     
+	mul		$tmp294 ___384_r_mu ___384_r_mu 	%line{171} %argrw{"wrr"}
+	mul		$tmp295 ___399_r_p ___399_r_p 	%argrw{"wrr"}
+	sub		$tmp296 $tmp294 $tmp295 	%argrw{"wrr"}
+	mul		$tmp297 bottom_radius bottom_radius 	%argrw{"wrr"}
+	add		___384_discriminant $tmp296 $tmp297 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:173
+#         float d = -r_mu - SafeSqrt(discriminant);
+	if		___395_ray_intersects_ground 541 563 	%line{173} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:174
+#         float d_min = r - bottom_radius;
+	neg		$tmp298 ___384_r_mu 	%line{174} %argrw{"wr"}
+	functioncall	$const20 522 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp300 ___384_discriminant $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp299 $tmp300 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:174
+#         float d_min = r - bottom_radius;
+	sub		___385_d $tmp298 $tmp299 	%line{174} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:175
+#         float d_max = rho;
+	sub		___385_d_min ___399_r_p bottom_radius 	%line{175} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:176
+#         u_mu = 0.5 - 0.5 * GetTextureCoordFromUnitRange(
+	assign		___385_d_max ___384_rho 	%line{176} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:178
+#             SCATTERING_TEXTURE_MU_SIZE / 2);
+	eq		$tmp303 ___385_d_max ___385_d_min 	%line{178} %argrw{"wrr"}
+	if		$tmp303 528 531 	%argrw{"r"}
+	assign		$tmp302 $const12 	%argrw{"wr"}
+	sub		$tmp304 ___385_d ___385_d_min 	%argrw{"wrr"}
+	sub		$tmp305 ___385_d_max ___385_d_min 	%argrw{"wrr"}
+	div		$tmp302 $tmp304 $tmp305 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:177
+#             d_max == d_min ? 0.0 : (d - d_min) / (d_max - d_min), 
+	functioncall	$const24 539 	%line{177} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp307 $const25 	%line{57} %argrw{"wr"}
+	div		$tmp306 $const8 $tmp307 	%argrw{"wrr"}
+	assign		$tmp309 $const25 	%argrw{"wr"}
+	div		$tmp308 $const17 $tmp309 	%argrw{"wrr"}
+	sub		$tmp310 $const17 $tmp308 	%argrw{"wrr"}
+	mul		$tmp311 $tmp302 $tmp310 	%argrw{"wrr"}
+	add		$tmp301 $tmp306 $tmp311 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:177
+#             d_max == d_min ? 0.0 : (d - d_min) / (d_max - d_min), 
+	mul		$tmp312 $const8 $tmp301 	%line{177} %argrw{"wrr"}
+	sub		___391_u_mu $const8 $tmp312 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:181
+#         float d_min = top_radius - r;
+	neg		$tmp313 ___384_r_mu 	%line{181} %argrw{"wr"}
+	mul		$tmp315 ___384_H ___384_H 	%argrw{"wrr"}
+	add		$tmp316 ___384_discriminant $tmp315 	%argrw{"wrr"}
+	functioncall	$const20 547 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp317 $tmp316 $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp314 $tmp317 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:181
+#         float d_min = top_radius - r;
+	add		___386_d $tmp313 $tmp314 	%line{181} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:182
+#         float d_max = rho + H;
+	sub		___386_d_min top_radius ___399_r_p 	%line{182} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:183
+#         u_mu = 0.5 + 0.5 * GetTextureCoordFromUnitRange(
+	add		___386_d_max ___384_rho ___384_H 	%line{183} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:185
+#             SCATTERING_TEXTURE_MU_SIZE / 2);
+	sub		$tmp319 ___386_d ___386_d_min 	%line{185} %argrw{"wrr"}
+	sub		$tmp320 ___386_d_max ___386_d_min 	%argrw{"wrr"}
+	div		$tmp321 $tmp319 $tmp320 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:184
+#             (d - d_min) / (d_max - d_min), 
+	functioncall	$const24 561 	%line{184} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp323 $const25 	%line{57} %argrw{"wr"}
+	div		$tmp322 $const8 $tmp323 	%argrw{"wrr"}
+	assign		$tmp325 $const25 	%argrw{"wr"}
+	div		$tmp324 $const17 $tmp325 	%argrw{"wrr"}
+	sub		$tmp326 $const17 $tmp324 	%argrw{"wrr"}
+	mul		$tmp327 $tmp321 $tmp326 	%argrw{"wrr"}
+	add		$tmp318 $tmp322 $tmp327 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:184
+#             (d - d_min) / (d_max - d_min), 
+	mul		$tmp328 $const8 $tmp318 	%line{184} %argrw{"wrr"}
+	add		___391_u_mu $const8 $tmp328 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:189
+#     float d_min = top_radius - bottom_radius;
+	functioncall	$const21 578 	%line{189} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:70
+#     return ClampDistance(-r * mu + SafeSqrt(discriminant));
+	mul		$tmp329 bottom_radius bottom_radius 	%line{70} %argrw{"wrr"}
+	mul		$tmp330 ___399_mu_s_p ___399_mu_s_p 	%argrw{"wrr"}
+	sub		$tmp331 $tmp330 $const17 	%argrw{"wrr"}
+	mul		$tmp332 $tmp329 $tmp331 	%argrw{"wrr"}
+	mul		$tmp333 top_radius top_radius 	%argrw{"wrr"}
+	add		___374_discriminant $tmp332 $tmp333 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	neg		$tmp334 bottom_radius 	%line{71} %argrw{"wr"}
+	mul		$tmp335 $tmp334 ___399_mu_s_p 	%argrw{"wrr"}
+	functioncall	$const20 575 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp337 ___374_discriminant $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp336 $tmp337 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	add		$tmp338 $tmp335 $tmp336 	%line{71} %argrw{"wrr"}
+	functioncall	$const22 578 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:45
+# }
+	max		___384_d $tmp338 $const12 	%line{45} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:190
+#     float d_max = H;
+	sub		___384_d_min top_radius bottom_radius 	%line{190} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:191
+#     float a = (d - d_min) / (d_max - d_min);
+	assign		___384_d_max ___384_H 	%line{191} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:192
+#     float D = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s_min, top_radius);
+	sub		$tmp339 ___384_d ___384_d_min 	%line{192} %argrw{"wrr"}
+	sub		$tmp340 ___384_d_max ___384_d_min 	%argrw{"wrr"}
+	div		___384_a $tmp339 $tmp340 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:193
+#     float A = (D - d_min) / (d_max - d_min);
+	functioncall	$const21 598 	%line{193} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:70
+#     return ClampDistance(-r * mu + SafeSqrt(discriminant));
+	mul		$tmp341 bottom_radius bottom_radius 	%line{70} %argrw{"wrr"}
+	mul		$tmp342 mu_s_min mu_s_min 	%argrw{"wrr"}
+	sub		$tmp343 $tmp342 $const17 	%argrw{"wrr"}
+	mul		$tmp344 $tmp341 $tmp343 	%argrw{"wrr"}
+	mul		$tmp345 top_radius top_radius 	%argrw{"wrr"}
+	add		___374_discriminant $tmp344 $tmp345 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	neg		$tmp346 bottom_radius 	%line{71} %argrw{"wr"}
+	mul		$tmp347 $tmp346 mu_s_min 	%argrw{"wrr"}
+	functioncall	$const20 595 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp349 ___374_discriminant $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp348 $tmp349 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	add		$tmp350 $tmp347 $tmp348 	%line{71} %argrw{"wrr"}
+	functioncall	$const22 598 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:45
+# }
+	max		___384_D $tmp350 $const12 	%line{45} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:194
+#     u_mu_s = GetTextureCoordFromUnitRange(
+	sub		$tmp351 ___384_D ___384_d_min 	%line{194} %argrw{"wrr"}
+	sub		$tmp352 ___384_d_max ___384_d_min 	%argrw{"wrr"}
+	div		___384_A $tmp351 $tmp352 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:196
+# 
+	div		$tmp354 ___384_a ___384_A 	%line{196} %argrw{"wrr"}
+	sub		$tmp355 $const17 $tmp354 	%argrw{"wrr"}
+	max		$tmp353 $tmp355 $const12 	%argrw{"wrr"}
+	add		$tmp356 $const17 ___384_a 	%argrw{"wrr"}
+	div		$tmp357 $tmp353 $tmp356 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:195
+#         max(1.0 - a / A, 0.0) / (1.0 + a), SCATTERING_TEXTURE_MU_S_SIZE);
+	functioncall	$const24 614 	%line{195} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp359 $const28 	%line{57} %argrw{"wr"}
+	div		$tmp358 $const8 $tmp359 	%argrw{"wrr"}
+	assign		$tmp361 $const28 	%argrw{"wr"}
+	div		$tmp360 $const17 $tmp361 	%argrw{"wrr"}
+	sub		$tmp362 $const17 $tmp360 	%argrw{"wrr"}
+	mul		$tmp363 $tmp357 $tmp362 	%argrw{"wrr"}
+	add		___391_u_mu_s $tmp358 $tmp363 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:198
+# }
+	add		$tmp364 ___395_nu $const17 	%line{198} %argrw{"wrr"}
+	div		___391_u_nu $tmp364 $const29 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:291
+#     float tex_x = floor(tex_coord_x);
+	mul		___391_tex_coord_x ___391_u_nu $const31 	%line{291} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:292
+#     float lerp_factor = tex_coord_x - tex_x;
+	floor		___391_tex_x ___391_tex_coord_x 	%line{292} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:293
+#     
+	sub		___391_lerp_factor ___391_tex_coord_x ___391_tex_x 	%line{293} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:295
+#     float uvw1_x = (tex_x + 1.0 + u_mu_s) / SCATTERING_TEXTURE_NU_SIZE;
+	add		$tmp365 ___391_tex_x ___391_u_mu_s 	%line{295} %argrw{"wrr"}
+	div		___391_uvw0_x $tmp365 $const33 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:296
+#     
+	add		$tmp366 ___391_tex_x $const17 	%line{296} %argrw{"wrr"}
+	add		$tmp367 $tmp366 ___391_u_mu_s 	%argrw{"wrr"}
+	div		___391_uvw1_x $tmp367 $const33 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:298
+#         // Combined mode: RGB = Rayleigh + multiple, A = single Mie red
+	if		use_combined_textures 698 810 	%line{298} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:300
+#         color s1 = GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r);
+	functioncall	$const34 651 	%line{300} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 630 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp368 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp368 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp369 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp370 $tmp369 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp370 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp371 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp371 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp372 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp373 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp372 $tmp373 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp374 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp374 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp375 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp375 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp377 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp376 $tmp377 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp376 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp379 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp378 $tmp379 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp378 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		___392_s0 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:301
+#         color combined = s0 * (1.0 - lerp_factor) + s1 * lerp_factor;
+	functioncall	$const34 677 	%line{301} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 656 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp380 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp380 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp381 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp382 $tmp381 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp382 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp383 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp383 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp384 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp385 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp384 $tmp385 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp386 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp386 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp387 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp387 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp389 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp388 $tmp389 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp388 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp391 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp390 $tmp391 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp390 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		___392_s1 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:302
+#         
+	sub		$tmp392 $const17 ___391_lerp_factor 	%line{302} %argrw{"wrr"}
+	mul		$tmp393 ___392_s0 $tmp392 	%argrw{"wrr"}
+	mul		$tmp394 ___392_s1 ___391_lerp_factor 	%argrw{"wrr"}
+	add		___392_combined $tmp393 $tmp394 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:304
+#         // For combined textures, alpha channel contains single mie red component
+	assign		___395_scattering_result ___392_combined 	%line{304} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:308
+#     } else {
+	compref		$tmp395 ___392_combined $const7 	%line{308} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:307
+#             combined, combined[0], rayleigh_scattering, mie_scattering);
+	functioncall	$const36 698 	%line{307} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:266
+#         return color(0.0);
+	compref		$tmp396 ___392_combined $const7 	%line{266} %argrw{"wrr"}
+	le		$tmp397 $tmp396 $const12 	%argrw{"wrr"}
+	if		$tmp397 689 689 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:267
+#     }
+	assign		___395_single_mie $const15 	%line{267} %argrw{"wr"}
+	return
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:269
+#            (rayleigh_scattering[0] / mie_scattering[0]) *
+	mul		$tmp398 ___392_combined $tmp395 	%line{269} %argrw{"wrr"}
+	compref		$tmp399 ___392_combined $const7 	%argrw{"wrr"}
+	div		$tmp400 $tmp398 $tmp399 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:270
+#            (mie_scattering / rayleigh_scattering);
+	compref		$tmp401 rayleigh_scattering $const7 	%line{270} %argrw{"wrr"}
+	compref		$tmp402 mie_scattering $const7 	%argrw{"wrr"}
+	div		$tmp403 $tmp401 $tmp402 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:269
+#            (rayleigh_scattering[0] / mie_scattering[0]) *
+	mul		$tmp404 $tmp400 $tmp403 	%line{269} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:271
+# }
+	div		$tmp405 mie_scattering rayleigh_scattering 	%line{271} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:270
+#            (mie_scattering / rayleigh_scattering);
+	mul		___395_single_mie $tmp404 $tmp405 	%line{270} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:311
+#                      GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	functioncall	$const34 724 	%line{311} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 703 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp407 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp407 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp408 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp409 $tmp408 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp409 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp410 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp410 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp411 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp412 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp411 $tmp412 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp413 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp413 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp414 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp414 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp416 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp415 $tmp416 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp415 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp418 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp417 $tmp418 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp417 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		$tmp406 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:311
+#                      GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	sub		$tmp419 $const17 ___391_lerp_factor 	%line{311} %argrw{"wrr"}
+	mul		$tmp420 $tmp406 $tmp419 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:312
+#         single_mie_scattering = GetScatteringTiled2D(single_mie_scattering_texture, uvw0_x, u_mu, u_r) * (1.0 - lerp_factor) +
+	functioncall	$const34 752 	%line{312} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 731 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp422 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp422 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp423 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp424 $tmp423 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp424 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp425 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp425 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp426 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp427 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp426 $tmp427 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp428 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp428 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp429 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp429 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp431 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp430 $tmp431 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp430 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp433 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp432 $tmp433 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp432 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		$tmp421 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:312
+#         single_mie_scattering = GetScatteringTiled2D(single_mie_scattering_texture, uvw0_x, u_mu, u_r) * (1.0 - lerp_factor) +
+	mul		$tmp434 $tmp421 ___391_lerp_factor 	%line{312} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:311
+#                      GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	add		___395_scattering_result $tmp420 $tmp434 	%line{311} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:313
+#                                 GetScatteringTiled2D(single_mie_scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	functioncall	$const34 780 	%line{313} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 759 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp436 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp436 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp437 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp438 $tmp437 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp438 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp439 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp439 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp440 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp441 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp440 $tmp441 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp442 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp442 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp443 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp443 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp445 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp444 $tmp445 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp444 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp447 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp446 $tmp447 ___391_uvw0_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp446 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 single_mie_scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 single_mie_scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		$tmp435 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:313
+#                                 GetScatteringTiled2D(single_mie_scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	sub		$tmp448 $const17 ___391_lerp_factor 	%line{313} %argrw{"wrr"}
+	mul		$tmp449 $tmp435 $tmp448 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:314
+#     }
+	functioncall	$const34 808 	%line{314} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:209
+#     
+	assign		___387_depth $const28 	%line{209} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:212
+#     float w_scaled = w_clamped * (depth - 1);
+	functioncall	$const35 787 	%line{212} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp451 ___391_u_r $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___387_w_clamped $tmp451 $const12 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:213
+#     int slice0 = (int)floor(w_scaled);
+	sub		$tmp452 ___387_depth $const6 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{213} %argrw{"wrr"}
+	assign		$tmp453 $tmp452 	%argrw{"wr"}
+	mul		___387_w_scaled ___387_w_clamped $tmp453 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:214
+#     int slice1 = min(slice0 + 1, depth - 1);
+	floor		$tmp454 ___387_w_scaled 	%line{214} %argrw{"wr"}
+	assign		___387_slice0 $tmp454 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:215
+#     float w_frac = w_scaled - slice0;
+	add		$tmp455 ___387_slice0 $const6 	%line{215} %argrw{"wrr"}
+	sub		$tmp456 ___387_depth $const6 	%argrw{"wrr"}
+	min		___387_slice1 $tmp455 $tmp456 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:216
+#     
+	assign		$tmp457 ___387_slice0 	%line{216} %argrw{"wr"}
+	sub		___387_w_frac ___387_w_scaled $tmp457 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:220
+#     
+	assign		$tmp458 ___387_depth 	%line{220} %argrw{"wr"}
+	div		___387_slice_width $const17 $tmp458 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:222
+#     float u1 = (slice1 + u) * slice_width;
+	assign		$tmp460 ___387_slice0 	%line{222} %argrw{"wr"}
+	add		$tmp459 $tmp460 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u0 $tmp459 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:223
+#     
+	assign		$tmp462 ___387_slice1 	%line{223} %argrw{"wr"}
+	add		$tmp461 $tmp462 ___391_uvw1_x 	%argrw{"wrr"}
+	mul		___387_u1 $tmp461 ___387_slice_width 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:226
+#     color c1 = texture(scattering_texture, u1, v);
+	texture		___387_c0 single_mie_scattering_texture ___387_u0 ___391_u_mu 	%line{226} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:227
+#     
+	texture		___387_c1 single_mie_scattering_texture ___387_u1 ___391_u_mu 	%line{227} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:229
+# }
+	mix		$tmp450 ___387_c0 ___387_c1 ___387_w_frac 	%line{229} %argrw{"wrrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:314
+#     }
+	mul		$tmp463 $tmp450 ___391_lerp_factor 	%line{314} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:313
+#                                 GetScatteringTiled2D(single_mie_scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+	add		___395_single_mie $tmp449 $tmp463 	%line{313} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:411
+#             transmittance_texture, r, mu, shadow_length,
+	functioncall	$const38 1041 	%line{411} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:136
+#                             bottom_radius, top_radius);
+	mul		$tmp465 $const12 $const12 	%line{136} %argrw{"wrr"}
+	mul		$tmp466 $const29 ___395_r 	%argrw{"wrr"}
+	mul		$tmp467 $tmp466 ___395_mu 	%argrw{"wrr"}
+	mul		$tmp468 $tmp467 $const12 	%argrw{"wrr"}
+	add		$tmp469 $tmp465 $tmp468 	%argrw{"wrr"}
+	mul		$tmp470 ___395_r ___395_r 	%argrw{"wrr"}
+	add		$tmp471 $tmp469 $tmp470 	%argrw{"wrr"}
+	sqrt		$tmp464 $tmp471 	%argrw{"wr"}
+	functioncall	$const37 823 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:49
+# }
+	functioncall	$const35 823 	%line{49} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp472 $tmp464 top_radius 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___381_r_d $tmp472 bottom_radius 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:138
+# 
+	mul		$tmp473 ___395_r ___395_mu 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{138} %argrw{"wrr"}
+	add		$tmp474 $tmp473 $const12 	%argrw{"wrr"}
+	div		$tmp475 $tmp474 ___381_r_d 	%argrw{"wrr"}
+	functioncall	$const39 830 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:41
+# }
+	functioncall	$const35 830 	%line{41} %argrw{"r"}
+# C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h:141
+# float  clamp (float x, float minval, float maxval) { return max(min(x,maxval),minval); }
+	min		$tmp476 $tmp475 $const17 	%filename{"C:\\\\Program Files\\\\Blender Foundation\\\\Blender 5.0\\\\5.0\\\\scripts\\\\addons_core\\\\cycles\\\\shader\\stdosl.h"} %line{141} %argrw{"wrr"}
+	max		___381_mu_d $tmp476 $const40 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:140
+#         color t1 = GetTransmittanceToTopAtmosphereBoundary(
+	if		___395_ray_intersects_ground 937 1041 	%filename{"C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl"} %line{140} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:142
+#         color t2 = GetTransmittanceToTopAtmosphereBoundary(
+	neg		$tmp477 ___381_mu_d 	%line{142} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:141
+#             transmittance_texture, r_d, -mu_d, bottom_radius, top_radius);
+	functioncall	$const18 882 	%line{141} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:126
+#     return texture(transmittance_texture, u, v);
+	functioncall	$const19 881 	%line{126} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:109
+#     float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+	mul		$tmp478 top_radius top_radius 	%line{109} %argrw{"wrr"}
+	mul		$tmp479 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp480 $tmp478 $tmp479 	%argrw{"wrr"}
+	sqrt		___379_H $tmp480 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:110
+#     float d = DistanceToTopAtmosphereBoundary(r, mu, top_radius);
+	mul		$tmp481 ___381_r_d ___381_r_d 	%line{110} %argrw{"wrr"}
+	mul		$tmp482 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp483 $tmp481 $tmp482 	%argrw{"wrr"}
+	functioncall	$const20 844 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp484 $tmp483 $const12 	%line{53} %argrw{"wrr"}
+	sqrt		___379_rho $tmp484 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:111
+#     float d_min = top_radius - r;
+	functioncall	$const21 859 	%line{111} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:70
+#     return ClampDistance(-r * mu + SafeSqrt(discriminant));
+	mul		$tmp485 ___381_r_d ___381_r_d 	%line{70} %argrw{"wrr"}
+	mul		$tmp486 $tmp477 $tmp477 	%argrw{"wrr"}
+	sub		$tmp487 $tmp486 $const17 	%argrw{"wrr"}
+	mul		$tmp488 $tmp485 $tmp487 	%argrw{"wrr"}
+	mul		$tmp489 top_radius top_radius 	%argrw{"wrr"}
+	add		___374_discriminant $tmp488 $tmp489 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	neg		$tmp490 ___381_r_d 	%line{71} %argrw{"wr"}
+	mul		$tmp491 $tmp490 $tmp477 	%argrw{"wrr"}
+	functioncall	$const20 856 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp493 ___374_discriminant $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp492 $tmp493 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	add		$tmp494 $tmp491 $tmp492 	%line{71} %argrw{"wrr"}
+	functioncall	$const22 859 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:45
+# }
+	max		___379_d $tmp494 $const12 	%line{45} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:112
+#     float d_max = rho + H;
+	sub		___379_d_min top_radius ___381_r_d 	%line{112} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:113
+#     float x_mu = (d - d_min) / (d_max - d_min);
+	add		___379_d_max ___379_rho ___379_H 	%line{113} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:114
+#     float x_r = rho / H;
+	sub		$tmp495 ___379_d ___379_d_min 	%line{114} %argrw{"wrr"}
+	sub		$tmp496 ___379_d_max ___379_d_min 	%argrw{"wrr"}
+	div		___379_x_mu $tmp495 $tmp496 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:115
+#     u = GetTextureCoordFromUnitRange(x_mu, TRANSMITTANCE_TEXTURE_WIDTH);
+	div		___379_x_r ___379_rho ___379_H 	%line{115} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:116
+#     v = GetTextureCoordFromUnitRange(x_r, TRANSMITTANCE_TEXTURE_HEIGHT);
+	functioncall	$const24 873 	%line{116} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp498 $const23 	%line{57} %argrw{"wr"}
+	div		$tmp497 $const8 $tmp498 	%argrw{"wrr"}
+	assign		$tmp500 $const23 	%argrw{"wr"}
+	div		$tmp499 $const17 $tmp500 	%argrw{"wrr"}
+	sub		$tmp501 $const17 $tmp499 	%argrw{"wrr"}
+	mul		$tmp502 ___379_x_mu $tmp501 	%argrw{"wrr"}
+	add		___380_u $tmp497 $tmp502 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:117
+# }
+	functioncall	$const24 881 	%line{117} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp504 $const25 	%line{57} %argrw{"wr"}
+	div		$tmp503 $const8 $tmp504 	%argrw{"wrr"}
+	assign		$tmp506 $const25 	%argrw{"wr"}
+	div		$tmp505 $const17 $tmp506 	%argrw{"wrr"}
+	sub		$tmp507 $const17 $tmp505 	%argrw{"wrr"}
+	mul		$tmp508 ___379_x_r $tmp507 	%argrw{"wrr"}
+	add		___380_v $tmp503 $tmp508 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:127
+# }
+	texture		___382_t1 transmittance_texture ___380_u ___380_v 	%line{127} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:144
+#         return min(t1 / max(t2, color(1e-6)), color(1.0));
+	neg		$tmp509 ___395_mu 	%line{144} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:143
+#             transmittance_texture, r, -mu, bottom_radius, top_radius);
+	functioncall	$const18 933 	%line{143} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:126
+#     return texture(transmittance_texture, u, v);
+	functioncall	$const19 932 	%line{126} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:109
+#     float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+	mul		$tmp510 top_radius top_radius 	%line{109} %argrw{"wrr"}
+	mul		$tmp511 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp512 $tmp510 $tmp511 	%argrw{"wrr"}
+	sqrt		___379_H $tmp512 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:110
+#     float d = DistanceToTopAtmosphereBoundary(r, mu, top_radius);
+	mul		$tmp513 ___395_r ___395_r 	%line{110} %argrw{"wrr"}
+	mul		$tmp514 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp515 $tmp513 $tmp514 	%argrw{"wrr"}
+	functioncall	$const20 895 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp516 $tmp515 $const12 	%line{53} %argrw{"wrr"}
+	sqrt		___379_rho $tmp516 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:111
+#     float d_min = top_radius - r;
+	functioncall	$const21 910 	%line{111} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:70
+#     return ClampDistance(-r * mu + SafeSqrt(discriminant));
+	mul		$tmp517 ___395_r ___395_r 	%line{70} %argrw{"wrr"}
+	mul		$tmp518 $tmp509 $tmp509 	%argrw{"wrr"}
+	sub		$tmp519 $tmp518 $const17 	%argrw{"wrr"}
+	mul		$tmp520 $tmp517 $tmp519 	%argrw{"wrr"}
+	mul		$tmp521 top_radius top_radius 	%argrw{"wrr"}
+	add		___374_discriminant $tmp520 $tmp521 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	neg		$tmp522 ___395_r 	%line{71} %argrw{"wr"}
+	mul		$tmp523 $tmp522 $tmp509 	%argrw{"wrr"}
+	functioncall	$const20 907 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp525 ___374_discriminant $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp524 $tmp525 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	add		$tmp526 $tmp523 $tmp524 	%line{71} %argrw{"wrr"}
+	functioncall	$const22 910 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:45
+# }
+	max		___379_d $tmp526 $const12 	%line{45} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:112
+#     float d_max = rho + H;
+	sub		___379_d_min top_radius ___395_r 	%line{112} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:113
+#     float x_mu = (d - d_min) / (d_max - d_min);
+	add		___379_d_max ___379_rho ___379_H 	%line{113} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:114
+#     float x_r = rho / H;
+	sub		$tmp527 ___379_d ___379_d_min 	%line{114} %argrw{"wrr"}
+	sub		$tmp528 ___379_d_max ___379_d_min 	%argrw{"wrr"}
+	div		___379_x_mu $tmp527 $tmp528 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:115
+#     u = GetTextureCoordFromUnitRange(x_mu, TRANSMITTANCE_TEXTURE_WIDTH);
+	div		___379_x_r ___379_rho ___379_H 	%line{115} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:116
+#     v = GetTextureCoordFromUnitRange(x_r, TRANSMITTANCE_TEXTURE_HEIGHT);
+	functioncall	$const24 924 	%line{116} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp530 $const23 	%line{57} %argrw{"wr"}
+	div		$tmp529 $const8 $tmp530 	%argrw{"wrr"}
+	assign		$tmp532 $const23 	%argrw{"wr"}
+	div		$tmp531 $const17 $tmp532 	%argrw{"wrr"}
+	sub		$tmp533 $const17 $tmp531 	%argrw{"wrr"}
+	mul		$tmp534 ___379_x_mu $tmp533 	%argrw{"wrr"}
+	add		___380_u $tmp529 $tmp534 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:117
+# }
+	functioncall	$const24 932 	%line{117} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp536 $const25 	%line{57} %argrw{"wr"}
+	div		$tmp535 $const8 $tmp536 	%argrw{"wrr"}
+	assign		$tmp538 $const25 	%argrw{"wr"}
+	div		$tmp537 $const17 $tmp538 	%argrw{"wrr"}
+	sub		$tmp539 $const17 $tmp537 	%argrw{"wrr"}
+	mul		$tmp540 ___379_x_r $tmp539 	%argrw{"wrr"}
+	add		___380_v $tmp535 $tmp540 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:127
+# }
+	texture		___382_t2 transmittance_texture ___380_u ___380_v 	%line{127} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:145
+#     } else {
+	max		$tmp541 ___382_t2 $const41 	%line{145} %argrw{"wrr"}
+	div		$tmp543 ___382_t1 $tmp541 	%argrw{"wrr"}
+	min		___399_shadow_transmittance $tmp543 $const14 	%argrw{"wrr"}
+	return
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:147
+#             transmittance_texture, r, mu, bottom_radius, top_radius);
+	functioncall	$const18 987 	%line{147} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:126
+#     return texture(transmittance_texture, u, v);
+	functioncall	$const19 986 	%line{126} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:109
+#     float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+	mul		$tmp545 top_radius top_radius 	%line{109} %argrw{"wrr"}
+	mul		$tmp546 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp547 $tmp545 $tmp546 	%argrw{"wrr"}
+	sqrt		___379_H $tmp547 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:110
+#     float d = DistanceToTopAtmosphereBoundary(r, mu, top_radius);
+	mul		$tmp548 ___395_r ___395_r 	%line{110} %argrw{"wrr"}
+	mul		$tmp549 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp550 $tmp548 $tmp549 	%argrw{"wrr"}
+	functioncall	$const20 949 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp551 $tmp550 $const12 	%line{53} %argrw{"wrr"}
+	sqrt		___379_rho $tmp551 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:111
+#     float d_min = top_radius - r;
+	functioncall	$const21 964 	%line{111} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:70
+#     return ClampDistance(-r * mu + SafeSqrt(discriminant));
+	mul		$tmp552 ___395_r ___395_r 	%line{70} %argrw{"wrr"}
+	mul		$tmp553 ___395_mu ___395_mu 	%argrw{"wrr"}
+	sub		$tmp554 $tmp553 $const17 	%argrw{"wrr"}
+	mul		$tmp555 $tmp552 $tmp554 	%argrw{"wrr"}
+	mul		$tmp556 top_radius top_radius 	%argrw{"wrr"}
+	add		___374_discriminant $tmp555 $tmp556 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	neg		$tmp557 ___395_r 	%line{71} %argrw{"wr"}
+	mul		$tmp558 $tmp557 ___395_mu 	%argrw{"wrr"}
+	functioncall	$const20 961 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp560 ___374_discriminant $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp559 $tmp560 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	add		$tmp561 $tmp558 $tmp559 	%line{71} %argrw{"wrr"}
+	functioncall	$const22 964 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:45
+# }
+	max		___379_d $tmp561 $const12 	%line{45} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:112
+#     float d_max = rho + H;
+	sub		___379_d_min top_radius ___395_r 	%line{112} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:113
+#     float x_mu = (d - d_min) / (d_max - d_min);
+	add		___379_d_max ___379_rho ___379_H 	%line{113} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:114
+#     float x_r = rho / H;
+	sub		$tmp562 ___379_d ___379_d_min 	%line{114} %argrw{"wrr"}
+	sub		$tmp563 ___379_d_max ___379_d_min 	%argrw{"wrr"}
+	div		___379_x_mu $tmp562 $tmp563 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:115
+#     u = GetTextureCoordFromUnitRange(x_mu, TRANSMITTANCE_TEXTURE_WIDTH);
+	div		___379_x_r ___379_rho ___379_H 	%line{115} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:116
+#     v = GetTextureCoordFromUnitRange(x_r, TRANSMITTANCE_TEXTURE_HEIGHT);
+	functioncall	$const24 978 	%line{116} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp565 $const23 	%line{57} %argrw{"wr"}
+	div		$tmp564 $const8 $tmp565 	%argrw{"wrr"}
+	assign		$tmp567 $const23 	%argrw{"wr"}
+	div		$tmp566 $const17 $tmp567 	%argrw{"wrr"}
+	sub		$tmp568 $const17 $tmp566 	%argrw{"wrr"}
+	mul		$tmp569 ___379_x_mu $tmp568 	%argrw{"wrr"}
+	add		___380_u $tmp564 $tmp569 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:117
+# }
+	functioncall	$const24 986 	%line{117} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp571 $const25 	%line{57} %argrw{"wr"}
+	div		$tmp570 $const8 $tmp571 	%argrw{"wrr"}
+	assign		$tmp573 $const25 	%argrw{"wr"}
+	div		$tmp572 $const17 $tmp573 	%argrw{"wrr"}
+	sub		$tmp574 $const17 $tmp572 	%argrw{"wrr"}
+	mul		$tmp575 ___379_x_r $tmp574 	%argrw{"wrr"}
+	add		___380_v $tmp570 $tmp575 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:127
+# }
+	texture		___383_t1 transmittance_texture ___380_u ___380_v 	%line{127} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:149
+#             transmittance_texture, r_d, mu_d, bottom_radius, top_radius);
+	functioncall	$const18 1037 	%line{149} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:126
+#     return texture(transmittance_texture, u, v);
+	functioncall	$const19 1036 	%line{126} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:109
+#     float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+	mul		$tmp576 top_radius top_radius 	%line{109} %argrw{"wrr"}
+	mul		$tmp577 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp578 $tmp576 $tmp577 	%argrw{"wrr"}
+	sqrt		___379_H $tmp578 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:110
+#     float d = DistanceToTopAtmosphereBoundary(r, mu, top_radius);
+	mul		$tmp579 ___381_r_d ___381_r_d 	%line{110} %argrw{"wrr"}
+	mul		$tmp580 bottom_radius bottom_radius 	%argrw{"wrr"}
+	sub		$tmp581 $tmp579 $tmp580 	%argrw{"wrr"}
+	functioncall	$const20 999 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp582 $tmp581 $const12 	%line{53} %argrw{"wrr"}
+	sqrt		___379_rho $tmp582 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:111
+#     float d_min = top_radius - r;
+	functioncall	$const21 1014 	%line{111} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:70
+#     return ClampDistance(-r * mu + SafeSqrt(discriminant));
+	mul		$tmp583 ___381_r_d ___381_r_d 	%line{70} %argrw{"wrr"}
+	mul		$tmp584 ___381_mu_d ___381_mu_d 	%argrw{"wrr"}
+	sub		$tmp585 $tmp584 $const17 	%argrw{"wrr"}
+	mul		$tmp586 $tmp583 $tmp585 	%argrw{"wrr"}
+	mul		$tmp587 top_radius top_radius 	%argrw{"wrr"}
+	add		___374_discriminant $tmp586 $tmp587 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	neg		$tmp588 ___381_r_d 	%line{71} %argrw{"wr"}
+	mul		$tmp589 $tmp588 ___381_mu_d 	%argrw{"wrr"}
+	functioncall	$const20 1011 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:53
+# }
+	max		$tmp591 ___374_discriminant $const12 	%line{53} %argrw{"wrr"}
+	sqrt		$tmp590 $tmp591 	%argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:71
+# }
+	add		$tmp592 $tmp589 $tmp590 	%line{71} %argrw{"wrr"}
+	functioncall	$const22 1014 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:45
+# }
+	max		___379_d $tmp592 $const12 	%line{45} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:112
+#     float d_max = rho + H;
+	sub		___379_d_min top_radius ___381_r_d 	%line{112} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:113
+#     float x_mu = (d - d_min) / (d_max - d_min);
+	add		___379_d_max ___379_rho ___379_H 	%line{113} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:114
+#     float x_r = rho / H;
+	sub		$tmp593 ___379_d ___379_d_min 	%line{114} %argrw{"wrr"}
+	sub		$tmp594 ___379_d_max ___379_d_min 	%argrw{"wrr"}
+	div		___379_x_mu $tmp593 $tmp594 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:115
+#     u = GetTextureCoordFromUnitRange(x_mu, TRANSMITTANCE_TEXTURE_WIDTH);
+	div		___379_x_r ___379_rho ___379_H 	%line{115} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:116
+#     v = GetTextureCoordFromUnitRange(x_r, TRANSMITTANCE_TEXTURE_HEIGHT);
+	functioncall	$const24 1028 	%line{116} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp596 $const23 	%line{57} %argrw{"wr"}
+	div		$tmp595 $const8 $tmp596 	%argrw{"wrr"}
+	assign		$tmp598 $const23 	%argrw{"wr"}
+	div		$tmp597 $const17 $tmp598 	%argrw{"wrr"}
+	sub		$tmp599 $const17 $tmp597 	%argrw{"wrr"}
+	mul		$tmp600 ___379_x_mu $tmp599 	%argrw{"wrr"}
+	add		___380_u $tmp595 $tmp600 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:117
+# }
+	functioncall	$const24 1036 	%line{117} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:57
+# }
+	assign		$tmp602 $const25 	%line{57} %argrw{"wr"}
+	div		$tmp601 $const8 $tmp602 	%argrw{"wrr"}
+	assign		$tmp604 $const25 	%argrw{"wr"}
+	div		$tmp603 $const17 $tmp604 	%argrw{"wrr"}
+	sub		$tmp605 $const17 $tmp603 	%argrw{"wrr"}
+	mul		$tmp606 ___379_x_r $tmp605 	%argrw{"wrr"}
+	add		___380_v $tmp601 $tmp606 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:127
+# }
+	texture		___383_t2 transmittance_texture ___380_u ___380_v 	%line{127} %argrw{"wrrr"} %argderivs{2,3}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:151
+#     }
+	max		$tmp607 ___383_t2 $const41 	%line{151} %argrw{"wrr"}
+	div		$tmp609 ___383_t1 $tmp607 	%argrw{"wrr"}
+	min		___399_shadow_transmittance $tmp609 $const14 	%argrw{"wrr"}
+	return
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:414
+#         single_mie = single_mie * shadow_transmittance;
+	mul		___395_scattering_result ___395_scattering_result ___399_shadow_transmittance 	%line{414} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:415
+#     }
+	mul		___395_single_mie ___395_single_mie ___399_shadow_transmittance 	%line{415} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:418
+#            single_mie * MiePhaseFunction(mie_phase_g, nu);
+	functioncall	$const42 1048 	%line{418} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:90
+#     return k * (1.0 + nu * nu);
+	assign		___377_k $const43 	%line{90} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:91
+# }
+	mul		$tmp612 ___395_nu ___395_nu 	%line{91} %argrw{"wrr"}
+	add		$tmp613 $const17 $tmp612 	%argrw{"wrr"}
+	mul		$tmp611 ___377_k $tmp613 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:418
+#            single_mie * MiePhaseFunction(mie_phase_g, nu);
+	mul		$tmp614 ___395_scattering_result $tmp611 	%line{418} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:419
+# }
+	functioncall	$const44 1066 	%line{419} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:95
+#     return k * (1.0 + nu * nu) / pow(1.0 + g * g - 2.0 * g * nu, 1.5);
+	mul		$tmp616 mie_phase_g mie_phase_g 	%line{95} %argrw{"wrr"}
+	sub		$tmp617 $const17 $tmp616 	%argrw{"wrr"}
+	mul		$tmp618 $const45 $tmp617 	%argrw{"wrr"}
+	mul		$tmp619 mie_phase_g mie_phase_g 	%argrw{"wrr"}
+	add		$tmp620 $const29 $tmp619 	%argrw{"wrr"}
+	div		___378_k $tmp618 $tmp620 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:96
+# }
+	mul		$tmp621 ___395_nu ___395_nu 	%line{96} %argrw{"wrr"}
+	add		$tmp622 $const17 $tmp621 	%argrw{"wrr"}
+	mul		$tmp623 ___378_k $tmp622 	%argrw{"wrr"}
+	mul		$tmp625 mie_phase_g mie_phase_g 	%argrw{"wrr"}
+	add		$tmp626 $const17 $tmp625 	%argrw{"wrr"}
+	mul		$tmp627 $const29 mie_phase_g 	%argrw{"wrr"}
+	mul		$tmp628 $tmp627 ___395_nu 	%argrw{"wrr"}
+	sub		$tmp629 $tmp626 $tmp628 	%argrw{"wrr"}
+	pow		$tmp624 $tmp629 $const46 	%argrw{"wrr"}
+	div		$tmp615 $tmp623 $tmp624 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:419
+# }
+	mul		$tmp630 ___395_single_mie $tmp615 	%line{419} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:418
+#            single_mie * MiePhaseFunction(mie_phase_g, nu);
+	add		radiance $tmp614 $tmp630 	%line{418} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:419
+# }
+	return	%line{419}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:527
+#     
+	mul		radiance radiance sun_intensity 	%line{527} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:530
+#         float cos_sun_angle = dot(view_ray, normalize(sun_direction));
+	if		add_sun_disk 1082 1082 	%line{530} %argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:531
+#         if (cos_sun_angle > cos(sun_angular_radius)) {
+	normalize	$tmp631 sun_direction 	%line{531} %argrw{"wr"}
+	dot		___407_cos_sun_angle view_ray $tmp631 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:532
+#             // Inside sun disk - add solar radiance attenuated by transmittance
+	cos		$tmp632 sun_angular_radius 	%line{532} %argrw{"wr"}
+	gt		$tmp633 ___407_cos_sun_angle $tmp632 	%argrw{"wrr"}
+	if		$tmp633 1082 1082 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:536
+#             radiance = radiance + transmittance_out * sun_radiance * sun_intensity;
+	mul		$tmp634 $const47 sun_angular_radius 	%line{536} %argrw{"wrr"}
+	mul		$tmp635 $tmp634 sun_angular_radius 	%argrw{"wrr"}
+	div		___408_sun_radiance solar_irradiance $tmp635 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:537
+#         }
+	mul		$tmp636 transmittance_out ___408_sun_radiance 	%line{537} %argrw{"wrr"}
+	mul		$tmp637 $tmp636 sun_intensity 	%argrw{"wrr"}
+	add		radiance radiance $tmp637 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:542
+#         Sky = radiance;
+	eq		$tmp638 debug_mode $const48 	%line{542} %argrw{"wrr"}
+	if		$tmp638 1086 1086 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:543
+#         return;
+	assign		Sky radiance 	%line{543} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:544
+#     }
+	exit	%line{544}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:548
+#         float cos_sun_angle = dot(view_ray, normalize(sun_direction));
+	eq		$tmp639 debug_mode $const49 	%line{548} %argrw{"wrr"}
+	if		$tmp639 1099 1099 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:549
+#         if (cos_sun_angle > cos(sun_angular_radius)) {
+	normalize	$tmp640 sun_direction 	%line{549} %argrw{"wr"}
+	dot		___410_cos_sun_angle view_ray $tmp640 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:550
+#             // Show raw sun radiance (should be very bright ~10000+)
+	cos		$tmp641 sun_angular_radius 	%line{550} %argrw{"wr"}
+	gt		$tmp642 ___410_cos_sun_angle $tmp641 	%argrw{"wrr"}
+	if		$tmp642 1097 1098 	%argrw{"r"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:552
+#             // Scale down for visualization: divide by 10000 so values around 1.0 are visible
+	mul		$tmp643 $const47 sun_angular_radius 	%line{552} %argrw{"wrr"}
+	mul		$tmp644 $tmp643 sun_angular_radius 	%argrw{"wrr"}
+	div		___411_sun_radiance solar_irradiance $tmp644 	%argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:554
+#         } else {
+	div		Sky ___411_sun_radiance $const50 	%line{554} %argrw{"wrr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:557
+#         }
+	assign		Sky transmittance_out 	%line{557} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:559
+#     }
+	exit	%line{559}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:563
+#     Transmittance = transmittance_out;
+	assign		Inscatter radiance 	%line{563} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:564
+#     
+	assign		Transmittance transmittance_out 	%line{564} %argrw{"wr"}
+# C:\\Program Files\\Blender Foundation\\Blender 5.0\\5.0\\scripts\\addons_core\\helios\\shaders\\bruneton_sky.osl:569
+# }
+	mul		Sky radiance exposure 	%line{569} %argrw{"wrr"}
+	end

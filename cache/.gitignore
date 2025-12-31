@@ -1,0 +1,3 @@
+# Ignore precomputed LUT files (generated, not source)
+*.exr
+*.npz
