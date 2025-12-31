@@ -283,15 +283,57 @@ def _update_sky_nodes(nodes, settings):
 
 def _force_viewport_update(context, world):
     """Force Blender to update the viewport with new sky settings."""
+    import os
+    
     # Tag the node tree as needing update
     if world and world.node_tree:
         world.node_tree.update_tag()
+    
+    # Force reload of Helios LUT textures from disk
+    # This is needed because Cycles caches textures
+    lut_dir = get_lut_cache_dir()
+    lut_files = ['transmittance.exr', 'scattering.exr', 'irradiance.exr', 'single_mie_scattering.exr']
+    
+    for img in bpy.data.images:
+        if img.filepath:
+            img_path = bpy.path.abspath(img.filepath)
+            img_name = os.path.basename(img_path)
+            if img_name in lut_files:
+                img.reload()
+                print(f"Helios: Reloaded texture {img_name}")
+    
+    # For OSL shaders, force texture cache invalidation by re-setting the paths
+    # This tricks Cycles into re-reading the texture files
+    if world and world.node_tree:
+        osl_node = world.node_tree.nodes.get(OSL_NODE_NAME)
+        if osl_node:
+            lut_inputs = {
+                'transmittance_texture': 'transmittance.exr',
+                'scattering_texture': 'scattering.exr',
+                'single_mie_scattering_texture': 'single_mie_scattering.exr',
+                'irradiance_texture': 'irradiance.exr',
+            }
+            for input_name, filename in lut_inputs.items():
+                if input_name in osl_node.inputs:
+                    filepath = os.path.join(lut_dir, filename)
+                    # Re-set the path to force Cycles to reload
+                    osl_node.inputs[input_name].default_value = filepath
+    
+    # Tag depsgraph for update - this forces Cycles to re-evaluate
+    context.view_layer.update()
+    
+    # Tag scene for update
+    if hasattr(context, 'scene') and context.scene:
+        context.scene.update_tag()
     
     # Tag all 3D viewports for redraw
     for window in context.window_manager.windows:
         for area in window.screen.areas:
             if area.type == 'VIEW_3D':
                 area.tag_redraw()
+                # Also tag the region for more aggressive redraw
+                for region in area.regions:
+                    region.tag_redraw()
 
 
 def update_atmosphere_world(context):
