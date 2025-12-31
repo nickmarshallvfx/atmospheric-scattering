@@ -6,9 +6,9 @@ APPROACH: Direct, faithful port of Bruneton reference_functions.glsl
 - Each step verified against reference before proceeding
 - Git commit at each verified milestone
 
-VERSION: 5 - All LUTs match reference (Transmittance, Single Scattering, Irradiance order 1)
+VERSION: 6 - Full multiple scattering (orders 1-4)
 """
-print("[Helios GPU v2] Module loaded - VERSION 5 (ALL LUTS MATCH REFERENCE)")
+print("[Helios GPU v2] Module loaded - VERSION 6 (full multiple scattering)")
 
 import os
 import numpy as np
@@ -754,6 +754,7 @@ def create_indirect_irradiance_shader() -> 'gpu.types.GPUShader':
     
     shader_info.sampler(0, 'FLOAT_2D', 'single_rayleigh_texture')
     shader_info.sampler(1, 'FLOAT_2D', 'single_mie_texture')
+    shader_info.sampler(2, 'FLOAT_2D', 'multiple_scattering_texture')
     
     shader_info.fragment_out(0, 'VEC4', 'fragColor')
     
@@ -886,17 +887,583 @@ void main() {
             
             float nu = dot(omega, omega_s);
             
-            // For order 1, sample single scattering with phase functions
-            vec3 rayleigh = SampleScattering(single_rayleigh_texture, r, omega.z, mu_s, nu);
-            vec3 mie = SampleScattering(single_mie_texture, r, omega.z, mu_s, nu);
-            vec3 scattering = rayleigh * RayleighPhaseFunction(nu) + mie * MiePhaseFunction(mie_phase_g, nu);
+            vec3 scattering_sample;
+            if (scattering_order == 1) {
+                // Order 1: sample single scattering with phase functions
+                vec3 rayleigh = SampleScattering(single_rayleigh_texture, r, omega.z, mu_s, nu);
+                vec3 mie = SampleScattering(single_mie_texture, r, omega.z, mu_s, nu);
+                scattering_sample = rayleigh * RayleighPhaseFunction(nu) + mie * MiePhaseFunction(mie_phase_g, nu);
+            } else {
+                // Order 2+: sample multiple scattering directly (no phase function)
+                scattering_sample = SampleScattering(multiple_scattering_texture, r, omega.z, mu_s, nu);
+            }
             
             // Irradiance = integral of L * cos(theta) * domega
-            result += scattering * omega.z * domega;
+            result += scattering_sample * omega.z * domega;
         }
     }
     
     fragColor = vec4(result, 1.0);
+}
+''')
+    
+    return gpu.shader.create_from_info(shader_info)
+
+
+# =============================================================================
+# SCATTERING DENSITY SHADER - First step of multiple scattering
+# =============================================================================
+def create_scattering_density_shader() -> 'gpu.types.GPUShader':
+    """
+    Create scattering density shader.
+    
+    Computes the radiance scattered at a point towards a direction,
+    by integrating incident radiance from all directions.
+    """
+    shader_info = gpu.types.GPUShaderCreateInfo()
+    
+    shader_info.vertex_in(0, 'VEC2', 'pos')
+    
+    vert_out = gpu.types.GPUStageInterfaceInfo("sd_vert_iface")
+    vert_out.smooth('VEC2', 'uv')
+    shader_info.vertex_out(vert_out)
+    
+    shader_info.push_constant('FLOAT', 'bottom_radius')
+    shader_info.push_constant('FLOAT', 'top_radius')
+    shader_info.push_constant('FLOAT', 'mu_s_min')
+    shader_info.push_constant('FLOAT', 'mie_phase_g')
+    shader_info.push_constant('FLOAT', 'ground_albedo')
+    shader_info.push_constant('VEC3', 'rayleigh_scattering')
+    shader_info.push_constant('VEC3', 'mie_scattering')
+    shader_info.push_constant('INT', 'scattering_order')
+    shader_info.push_constant('INT', 'layer')
+    
+    shader_info.sampler(0, 'FLOAT_2D', 'transmittance_texture')
+    shader_info.sampler(1, 'FLOAT_2D', 'single_rayleigh_texture')
+    shader_info.sampler(2, 'FLOAT_2D', 'single_mie_texture')
+    shader_info.sampler(3, 'FLOAT_2D', 'multiple_scattering_texture')
+    shader_info.sampler(4, 'FLOAT_2D', 'irradiance_texture')
+    
+    shader_info.fragment_out(0, 'VEC4', 'fragColor')
+    
+    shader_info.vertex_source('''
+void main() {
+    uv = pos * 0.5 + 0.5;
+    gl_Position = vec4(pos, 0.0, 1.0);
+}
+''')
+    
+    shader_info.fragment_source('''
+#define PI 3.14159265358979323846
+#define TRANSMITTANCE_TEXTURE_WIDTH 256
+#define TRANSMITTANCE_TEXTURE_HEIGHT 64
+#define SCATTERING_TEXTURE_R_SIZE 32
+#define SCATTERING_TEXTURE_MU_SIZE 128
+#define SCATTERING_TEXTURE_MU_S_SIZE 32
+#define SCATTERING_TEXTURE_NU_SIZE 8
+#define SCATTERING_TEXTURE_WIDTH 256
+#define SCATTERING_TEXTURE_HEIGHT 128
+#define SCATTERING_TEXTURE_DEPTH 32
+#define IRRADIANCE_TEXTURE_WIDTH 64
+#define IRRADIANCE_TEXTURE_HEIGHT 16
+#define SAMPLE_COUNT 16
+
+float SafeSqrt(float x) { return sqrt(max(x, 0.0)); }
+float ClampCosine(float mu) { return clamp(mu, -1.0, 1.0); }
+float ClampRadius(float r) { return clamp(r, bottom_radius, top_radius); }
+
+float GetUnitRangeFromTextureCoord(float u, float tex_size) {
+    return (u - 0.5 / tex_size) / (1.0 - 1.0 / tex_size);
+}
+
+float GetTextureCoordFromUnitRange(float x, float tex_size) {
+    return 0.5 / tex_size + x * (1.0 - 1.0 / tex_size);
+}
+
+float DistanceToTopAtmosphereBoundary(float r, float mu) {
+    float disc = r * r * (mu * mu - 1.0) + top_radius * top_radius;
+    return max(0.0, -r * mu + SafeSqrt(disc));
+}
+
+float DistanceToBottomAtmosphereBoundary(float r, float mu) {
+    float disc = r * r * (mu * mu - 1.0) + bottom_radius * bottom_radius;
+    return max(0.0, -r * mu - SafeSqrt(disc));
+}
+
+bool RayIntersectsGround(float r, float mu) {
+    return mu < 0.0 && r * r * (mu * mu - 1.0) + bottom_radius * bottom_radius >= 0.0;
+}
+
+float RayleighPhaseFunction(float nu) {
+    return (3.0 / (16.0 * PI)) * (1.0 + nu * nu);
+}
+
+float MiePhaseFunction(float g, float nu) {
+    float g2 = g * g;
+    return (3.0 / (8.0 * PI)) * ((1.0 - g2) * (1.0 + nu * nu)) /
+           ((2.0 + g2) * pow(1.0 + g2 - 2.0 * g * nu, 1.5));
+}
+
+// Rayleigh density at altitude
+float GetRayleighDensity(float altitude) {
+    return exp(-altitude / 8000.0);
+}
+
+// Mie density at altitude
+float GetMieDensity(float altitude) {
+    return exp(-altitude / 1200.0);
+}
+
+// Sample transmittance texture
+vec3 GetTransmittanceToTopAtmosphereBoundary(float r, float mu) {
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    float d = DistanceToTopAtmosphereBoundary(r, mu);
+    float d_min = top_radius - r;
+    float d_max = rho + H;
+    float x_mu = (d - d_min) / (d_max - d_min);
+    float x_r = rho / H;
+    vec2 uv = vec2(GetTextureCoordFromUnitRange(x_mu, float(TRANSMITTANCE_TEXTURE_WIDTH)),
+                   GetTextureCoordFromUnitRange(x_r, float(TRANSMITTANCE_TEXTURE_HEIGHT)));
+    return texture(transmittance_texture, uv).rgb;
+}
+
+// Get transmittance between two points
+vec3 GetTransmittance(float r, float mu, float d, bool ray_intersects_ground) {
+    float r_d = ClampRadius(sqrt(d * d + 2.0 * r * mu * d + r * r));
+    float mu_d = ClampCosine((r * mu + d) / r_d);
+    
+    vec3 T1 = GetTransmittanceToTopAtmosphereBoundary(r, mu);
+    vec3 T2 = GetTransmittanceToTopAtmosphereBoundary(r_d, mu_d);
+    
+    if (ray_intersects_ground) {
+        return min(T2 / max(T1, vec3(0.0001)), vec3(1.0));
+    } else {
+        return min(T1 / max(T2, vec3(0.0001)), vec3(1.0));
+    }
+}
+
+// Sample scattering from tiled 2D texture
+vec3 SampleScattering(sampler2D tex, float r, float mu, float mu_s, float nu, bool ray_intersects_ground) {
+    if (mu_s < mu_s_min) return vec3(0.0);
+    
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    float u_r = GetTextureCoordFromUnitRange(rho / H, float(SCATTERING_TEXTURE_R_SIZE));
+    
+    // u_mu based on whether ray intersects ground
+    float r_mu = r * mu;
+    float discriminant = r_mu * r_mu - r * r + bottom_radius * bottom_radius;
+    float u_mu;
+    if (ray_intersects_ground) {
+        float d = -r_mu - SafeSqrt(discriminant);
+        float d_min = r - bottom_radius;
+        float d_max = rho;
+        u_mu = 0.5 - 0.5 * GetTextureCoordFromUnitRange(
+            (d_max > d_min) ? (d - d_min) / (d_max - d_min) : 0.0,
+            float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
+    } else {
+        float d = -r_mu + SafeSqrt(discriminant + H * H);
+        float d_min = top_radius - r;
+        float d_max = rho + H;
+        u_mu = 0.5 + 0.5 * GetTextureCoordFromUnitRange(
+            (d_max > d_min) ? (d - d_min) / (d_max - d_min) : 0.0,
+            float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
+    }
+    
+    // u_mu_s
+    float d_s = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s);
+    float d_s_min = top_radius - bottom_radius;
+    float d_s_max = H;
+    float a = (d_s - d_s_min) / (d_s_max - d_s_min);
+    float D = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s_min);
+    float A = (D - d_s_min) / (d_s_max - d_s_min);
+    float u_mu_s = GetTextureCoordFromUnitRange(max(1.0 - a / A, 0.0) / (1.0 + a), float(SCATTERING_TEXTURE_MU_S_SIZE));
+    
+    // u_nu with interpolation
+    float u_nu = (clamp(nu, -1.0, 1.0) + 1.0) * 0.5;
+    float tex_coord_nu = u_nu * float(SCATTERING_TEXTURE_NU_SIZE - 1);
+    float tex_nu_floor = floor(tex_coord_nu);
+    float lerp = tex_coord_nu - tex_nu_floor;
+    
+    int layer_idx = int(u_r * float(SCATTERING_TEXTURE_DEPTH));
+    layer_idx = clamp(layer_idx, 0, SCATTERING_TEXTURE_DEPTH - 1);
+    
+    float u_within_0 = (tex_nu_floor + u_mu_s) / float(SCATTERING_TEXTURE_NU_SIZE);
+    float u_within_1 = (min(tex_nu_floor + 1.0, float(SCATTERING_TEXTURE_NU_SIZE - 1)) + u_mu_s) / float(SCATTERING_TEXTURE_NU_SIZE);
+    
+    float tex_x_0 = (float(layer_idx) + u_within_0) / float(SCATTERING_TEXTURE_DEPTH);
+    float tex_x_1 = (float(layer_idx) + u_within_1) / float(SCATTERING_TEXTURE_DEPTH);
+    
+    vec3 s0 = texture(tex, vec2(tex_x_0, u_mu)).rgb;
+    vec3 s1 = texture(tex, vec2(tex_x_1, u_mu)).rgb;
+    
+    return mix(s0, s1, lerp);
+}
+
+// Sample irradiance texture
+vec3 GetIrradiance(float r, float mu_s) {
+    float x_r = (r - bottom_radius) / (top_radius - bottom_radius);
+    float x_mu_s = mu_s * 0.5 + 0.5;
+    vec2 uv = vec2(GetTextureCoordFromUnitRange(x_mu_s, float(IRRADIANCE_TEXTURE_WIDTH)),
+                   GetTextureCoordFromUnitRange(x_r, float(IRRADIANCE_TEXTURE_HEIGHT)));
+    return texture(irradiance_texture, uv).rgb;
+}
+
+// Get r, mu, mu_s, nu from scattering texture coordinates
+void GetRMuMuSNuFromScatteringTextureUvwz(vec4 uvwz, out float r, out float mu, out float mu_s, out float nu, out bool ray_r_mu_intersects_ground) {
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = H * GetUnitRangeFromTextureCoord(uvwz.w, float(SCATTERING_TEXTURE_R_SIZE));
+    r = sqrt(rho * rho + bottom_radius * bottom_radius);
+    
+    if (uvwz.z < 0.5) {
+        float d_min = r - bottom_radius;
+        float d_max = rho;
+        float d = d_min + (d_max - d_min) * GetUnitRangeFromTextureCoord(
+            1.0 - 2.0 * uvwz.z, float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
+        mu = (d == 0.0) ? -1.0 : ClampCosine(-(rho * rho + d * d) / (2.0 * r * d));
+        ray_r_mu_intersects_ground = true;
+    } else {
+        float d_min = top_radius - r;
+        float d_max = rho + H;
+        float d = d_min + (d_max - d_min) * GetUnitRangeFromTextureCoord(
+            2.0 * uvwz.z - 1.0, float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
+        mu = (d == 0.0) ? 1.0 : ClampCosine((H * H - rho * rho - d * d) / (2.0 * r * d));
+        ray_r_mu_intersects_ground = false;
+    }
+    
+    float x_mu_s = GetUnitRangeFromTextureCoord(uvwz.y, float(SCATTERING_TEXTURE_MU_S_SIZE));
+    float d_min = top_radius - bottom_radius;
+    float d_max = H;
+    float D = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s_min);
+    float A_val = (D - d_min) / (d_max - d_min);
+    float a_val = (A_val - x_mu_s * A_val) / (1.0 + x_mu_s * A_val);
+    float d = d_min + min(a_val, A_val) * (d_max - d_min);
+    mu_s = (d == 0.0) ? 1.0 : ClampCosine((H * H - d * d) / (2.0 * bottom_radius * d));
+    
+    nu = ClampCosine(uvwz.x * 2.0 - 1.0);
+}
+
+void main() {
+    // Compute uvwz from fragment coordinates
+    float frag_coord_nu = floor(uv.x * float(SCATTERING_TEXTURE_WIDTH) / float(SCATTERING_TEXTURE_MU_S_SIZE));
+    float frag_coord_mu_s = mod(uv.x * float(SCATTERING_TEXTURE_WIDTH), float(SCATTERING_TEXTURE_MU_S_SIZE));
+    
+    vec4 uvwz = vec4(frag_coord_nu, frag_coord_mu_s, uv.y * float(SCATTERING_TEXTURE_HEIGHT), float(layer)) /
+                vec4(float(SCATTERING_TEXTURE_NU_SIZE) - 1.0, float(SCATTERING_TEXTURE_MU_S_SIZE),
+                     float(SCATTERING_TEXTURE_MU_SIZE), float(SCATTERING_TEXTURE_R_SIZE));
+    
+    float r, mu, mu_s, nu;
+    bool ray_r_mu_intersects_ground;
+    GetRMuMuSNuFromScatteringTextureUvwz(uvwz, r, mu, mu_s, nu, ray_r_mu_intersects_ground);
+    
+    // Clamp nu to valid range
+    nu = clamp(nu, mu * mu_s - sqrt((1.0 - mu * mu) * (1.0 - mu_s * mu_s)),
+                   mu * mu_s + sqrt((1.0 - mu * mu) * (1.0 - mu_s * mu_s)));
+    
+    // Compute direction vectors
+    vec3 zenith_direction = vec3(0.0, 0.0, 1.0);
+    vec3 omega = vec3(sqrt(1.0 - mu * mu), 0.0, mu);
+    float sun_dir_x = (omega.x == 0.0) ? 0.0 : (nu - mu * mu_s) / omega.x;
+    float sun_dir_y = sqrt(max(1.0 - sun_dir_x * sun_dir_x - mu_s * mu_s, 0.0));
+    vec3 omega_s = vec3(sun_dir_x, sun_dir_y, mu_s);
+    
+    float dphi = PI / float(SAMPLE_COUNT);
+    float dtheta = PI / float(SAMPLE_COUNT);
+    vec3 rayleigh_mie = vec3(0.0);
+    
+    // Integrate over all incident directions
+    for (int l = 0; l < SAMPLE_COUNT; ++l) {
+        float theta = (float(l) + 0.5) * dtheta;
+        float cos_theta = cos(theta);
+        float sin_theta = sin(theta);
+        bool ray_r_theta_intersects_ground = RayIntersectsGround(r, cos_theta);
+        
+        // Ground contribution (computed once per theta)
+        float distance_to_ground = 0.0;
+        vec3 transmittance_to_ground = vec3(0.0);
+        vec3 ground_albedo_vec = vec3(0.0);
+        if (ray_r_theta_intersects_ground) {
+            distance_to_ground = DistanceToBottomAtmosphereBoundary(r, cos_theta);
+            transmittance_to_ground = GetTransmittance(r, cos_theta, distance_to_ground, true);
+            ground_albedo_vec = vec3(ground_albedo);
+        }
+        
+        for (int m = 0; m < 2 * SAMPLE_COUNT; ++m) {
+            float phi = (float(m) + 0.5) * dphi;
+            vec3 omega_i = vec3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+            float domega_i = dtheta * dphi * sin_theta;
+            
+            // Incident radiance from direction omega_i
+            float nu1 = dot(omega_s, omega_i);
+            vec3 incident_radiance;
+            
+            if (scattering_order == 2) {
+                // Order 2: sample single scattering with phase functions
+                vec3 rayleigh = SampleScattering(single_rayleigh_texture, r, omega_i.z, mu_s, nu1, ray_r_theta_intersects_ground);
+                vec3 mie = SampleScattering(single_mie_texture, r, omega_i.z, mu_s, nu1, ray_r_theta_intersects_ground);
+                incident_radiance = rayleigh * RayleighPhaseFunction(nu1) + mie * MiePhaseFunction(mie_phase_g, nu1);
+            } else {
+                // Order 3+: sample multiple scattering (no phase function)
+                incident_radiance = SampleScattering(multiple_scattering_texture, r, omega_i.z, mu_s, nu1, ray_r_theta_intersects_ground);
+            }
+            
+            // Ground bounce contribution
+            if (ray_r_theta_intersects_ground) {
+                vec3 ground_normal = normalize(zenith_direction * r + omega_i * distance_to_ground);
+                vec3 ground_irradiance = GetIrradiance(bottom_radius, dot(ground_normal, omega_s));
+                incident_radiance += transmittance_to_ground * ground_albedo_vec * (1.0 / PI) * ground_irradiance;
+            }
+            
+            // Scatter towards -omega
+            float nu2 = dot(omega, omega_i);
+            float altitude = r - bottom_radius;
+            float rayleigh_density = GetRayleighDensity(altitude);
+            float mie_density = GetMieDensity(altitude);
+            
+            rayleigh_mie += incident_radiance * (
+                rayleigh_scattering * rayleigh_density * RayleighPhaseFunction(nu2) +
+                mie_scattering * mie_density * MiePhaseFunction(mie_phase_g, nu2)
+            ) * domega_i;
+        }
+    }
+    
+    fragColor = vec4(rayleigh_mie, 1.0);
+}
+''')
+    
+    return gpu.shader.create_from_info(shader_info)
+
+
+# =============================================================================
+# MULTIPLE SCATTERING SHADER - Second step of multiple scattering
+# =============================================================================
+def create_multiple_scattering_shader() -> 'gpu.types.GPUShader':
+    """
+    Create multiple scattering shader.
+    
+    Integrates scattering density along ray to get n-th order scattering.
+    """
+    shader_info = gpu.types.GPUShaderCreateInfo()
+    
+    shader_info.vertex_in(0, 'VEC2', 'pos')
+    
+    vert_out = gpu.types.GPUStageInterfaceInfo("ms_vert_iface")
+    vert_out.smooth('VEC2', 'uv')
+    shader_info.vertex_out(vert_out)
+    
+    shader_info.push_constant('FLOAT', 'bottom_radius')
+    shader_info.push_constant('FLOAT', 'top_radius')
+    shader_info.push_constant('FLOAT', 'mu_s_min')
+    shader_info.push_constant('INT', 'layer')
+    
+    shader_info.sampler(0, 'FLOAT_2D', 'transmittance_texture')
+    shader_info.sampler(1, 'FLOAT_2D', 'scattering_density_texture')
+    
+    shader_info.fragment_out(0, 'VEC4', 'fragColor')
+    
+    shader_info.vertex_source('''
+void main() {
+    uv = pos * 0.5 + 0.5;
+    gl_Position = vec4(pos, 0.0, 1.0);
+}
+''')
+    
+    shader_info.fragment_source('''
+#define PI 3.14159265358979323846
+#define TRANSMITTANCE_TEXTURE_WIDTH 256
+#define TRANSMITTANCE_TEXTURE_HEIGHT 64
+#define SCATTERING_TEXTURE_R_SIZE 32
+#define SCATTERING_TEXTURE_MU_SIZE 128
+#define SCATTERING_TEXTURE_MU_S_SIZE 32
+#define SCATTERING_TEXTURE_NU_SIZE 8
+#define SCATTERING_TEXTURE_WIDTH 256
+#define SCATTERING_TEXTURE_HEIGHT 128
+#define SCATTERING_TEXTURE_DEPTH 32
+#define SAMPLE_COUNT 50
+
+float SafeSqrt(float x) { return sqrt(max(x, 0.0)); }
+float ClampCosine(float mu) { return clamp(mu, -1.0, 1.0); }
+float ClampRadius(float r) { return clamp(r, bottom_radius, top_radius); }
+
+float GetUnitRangeFromTextureCoord(float u, float tex_size) {
+    return (u - 0.5 / tex_size) / (1.0 - 1.0 / tex_size);
+}
+
+float GetTextureCoordFromUnitRange(float x, float tex_size) {
+    return 0.5 / tex_size + x * (1.0 - 1.0 / tex_size);
+}
+
+float DistanceToTopAtmosphereBoundary(float r, float mu) {
+    float disc = r * r * (mu * mu - 1.0) + top_radius * top_radius;
+    return max(0.0, -r * mu + SafeSqrt(disc));
+}
+
+float DistanceToBottomAtmosphereBoundary(float r, float mu) {
+    float disc = r * r * (mu * mu - 1.0) + bottom_radius * bottom_radius;
+    return max(0.0, -r * mu - SafeSqrt(disc));
+}
+
+bool RayIntersectsGround(float r, float mu) {
+    return mu < 0.0 && r * r * (mu * mu - 1.0) + bottom_radius * bottom_radius >= 0.0;
+}
+
+float DistanceToNearestAtmosphereBoundary(float r, float mu, bool ray_intersects_ground) {
+    if (ray_intersects_ground) {
+        return DistanceToBottomAtmosphereBoundary(r, mu);
+    } else {
+        return DistanceToTopAtmosphereBoundary(r, mu);
+    }
+}
+
+// Sample transmittance
+vec3 GetTransmittanceToTopAtmosphereBoundary(float r, float mu) {
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    float d = DistanceToTopAtmosphereBoundary(r, mu);
+    float d_min = top_radius - r;
+    float d_max = rho + H;
+    float x_mu = (d - d_min) / (d_max - d_min);
+    float x_r = rho / H;
+    vec2 uv = vec2(GetTextureCoordFromUnitRange(x_mu, float(TRANSMITTANCE_TEXTURE_WIDTH)),
+                   GetTextureCoordFromUnitRange(x_r, float(TRANSMITTANCE_TEXTURE_HEIGHT)));
+    return texture(transmittance_texture, uv).rgb;
+}
+
+vec3 GetTransmittance(float r, float mu, float d, bool ray_intersects_ground) {
+    float r_d = ClampRadius(sqrt(d * d + 2.0 * r * mu * d + r * r));
+    float mu_d = ClampCosine((r * mu + d) / r_d);
+    
+    vec3 T1 = GetTransmittanceToTopAtmosphereBoundary(r, mu);
+    vec3 T2 = GetTransmittanceToTopAtmosphereBoundary(r_d, mu_d);
+    
+    if (ray_intersects_ground) {
+        return min(T2 / max(T1, vec3(0.0001)), vec3(1.0));
+    } else {
+        return min(T1 / max(T2, vec3(0.0001)), vec3(1.0));
+    }
+}
+
+// Sample scattering density from tiled texture
+vec3 SampleScatteringDensity(float r, float mu, float mu_s, float nu, bool ray_intersects_ground) {
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    float u_r = GetTextureCoordFromUnitRange(rho / H, float(SCATTERING_TEXTURE_R_SIZE));
+    
+    float r_mu = r * mu;
+    float discriminant = r_mu * r_mu - r * r + bottom_radius * bottom_radius;
+    float u_mu;
+    if (ray_intersects_ground) {
+        float d = -r_mu - SafeSqrt(discriminant);
+        float d_min = r - bottom_radius;
+        float d_max = rho;
+        u_mu = 0.5 - 0.5 * GetTextureCoordFromUnitRange(
+            (d_max > d_min) ? (d - d_min) / (d_max - d_min) : 0.0,
+            float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
+    } else {
+        float d = -r_mu + SafeSqrt(discriminant + H * H);
+        float d_min = top_radius - r;
+        float d_max = rho + H;
+        u_mu = 0.5 + 0.5 * GetTextureCoordFromUnitRange(
+            (d_max > d_min) ? (d - d_min) / (d_max - d_min) : 0.0,
+            float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
+    }
+    
+    float d_s = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s);
+    float d_s_min = top_radius - bottom_radius;
+    float d_s_max = H;
+    float a = (d_s - d_s_min) / (d_s_max - d_s_min);
+    float D = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s_min);
+    float A = (D - d_s_min) / (d_s_max - d_s_min);
+    float u_mu_s = GetTextureCoordFromUnitRange(max(1.0 - a / A, 0.0) / (1.0 + a), float(SCATTERING_TEXTURE_MU_S_SIZE));
+    
+    float u_nu = (clamp(nu, -1.0, 1.0) + 1.0) * 0.5;
+    float tex_coord_nu = u_nu * float(SCATTERING_TEXTURE_NU_SIZE - 1);
+    float tex_nu_floor = floor(tex_coord_nu);
+    float lerp = tex_coord_nu - tex_nu_floor;
+    
+    int layer_idx = int(u_r * float(SCATTERING_TEXTURE_DEPTH));
+    layer_idx = clamp(layer_idx, 0, SCATTERING_TEXTURE_DEPTH - 1);
+    
+    float u_within_0 = (tex_nu_floor + u_mu_s) / float(SCATTERING_TEXTURE_NU_SIZE);
+    float u_within_1 = (min(tex_nu_floor + 1.0, float(SCATTERING_TEXTURE_NU_SIZE - 1)) + u_mu_s) / float(SCATTERING_TEXTURE_NU_SIZE);
+    
+    float tex_x_0 = (float(layer_idx) + u_within_0) / float(SCATTERING_TEXTURE_DEPTH);
+    float tex_x_1 = (float(layer_idx) + u_within_1) / float(SCATTERING_TEXTURE_DEPTH);
+    
+    vec3 s0 = texture(scattering_density_texture, vec2(tex_x_0, u_mu)).rgb;
+    vec3 s1 = texture(scattering_density_texture, vec2(tex_x_1, u_mu)).rgb;
+    
+    return mix(s0, s1, lerp);
+}
+
+void GetRMuMuSNuFromScatteringTextureUvwz(vec4 uvwz, out float r, out float mu, out float mu_s, out float nu, out bool ray_r_mu_intersects_ground) {
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = H * GetUnitRangeFromTextureCoord(uvwz.w, float(SCATTERING_TEXTURE_R_SIZE));
+    r = sqrt(rho * rho + bottom_radius * bottom_radius);
+    
+    if (uvwz.z < 0.5) {
+        float d_min = r - bottom_radius;
+        float d_max = rho;
+        float d = d_min + (d_max - d_min) * GetUnitRangeFromTextureCoord(
+            1.0 - 2.0 * uvwz.z, float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
+        mu = (d == 0.0) ? -1.0 : ClampCosine(-(rho * rho + d * d) / (2.0 * r * d));
+        ray_r_mu_intersects_ground = true;
+    } else {
+        float d_min = top_radius - r;
+        float d_max = rho + H;
+        float d = d_min + (d_max - d_min) * GetUnitRangeFromTextureCoord(
+            2.0 * uvwz.z - 1.0, float(SCATTERING_TEXTURE_MU_SIZE) / 2.0);
+        mu = (d == 0.0) ? 1.0 : ClampCosine((H * H - rho * rho - d * d) / (2.0 * r * d));
+        ray_r_mu_intersects_ground = false;
+    }
+    
+    float x_mu_s = GetUnitRangeFromTextureCoord(uvwz.y, float(SCATTERING_TEXTURE_MU_S_SIZE));
+    float d_min = top_radius - bottom_radius;
+    float d_max = H;
+    float D = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s_min);
+    float A_val = (D - d_min) / (d_max - d_min);
+    float a_val = (A_val - x_mu_s * A_val) / (1.0 + x_mu_s * A_val);
+    float d = d_min + min(a_val, A_val) * (d_max - d_min);
+    mu_s = (d == 0.0) ? 1.0 : ClampCosine((H * H - d * d) / (2.0 * bottom_radius * d));
+    
+    nu = ClampCosine(uvwz.x * 2.0 - 1.0);
+}
+
+void main() {
+    float frag_coord_nu = floor(uv.x * float(SCATTERING_TEXTURE_WIDTH) / float(SCATTERING_TEXTURE_MU_S_SIZE));
+    float frag_coord_mu_s = mod(uv.x * float(SCATTERING_TEXTURE_WIDTH), float(SCATTERING_TEXTURE_MU_S_SIZE));
+    
+    vec4 uvwz = vec4(frag_coord_nu, frag_coord_mu_s, uv.y * float(SCATTERING_TEXTURE_HEIGHT), float(layer)) /
+                vec4(float(SCATTERING_TEXTURE_NU_SIZE) - 1.0, float(SCATTERING_TEXTURE_MU_S_SIZE),
+                     float(SCATTERING_TEXTURE_MU_SIZE), float(SCATTERING_TEXTURE_R_SIZE));
+    
+    float r, mu, mu_s, nu;
+    bool ray_r_mu_intersects_ground;
+    GetRMuMuSNuFromScatteringTextureUvwz(uvwz, r, mu, mu_s, nu, ray_r_mu_intersects_ground);
+    
+    nu = clamp(nu, mu * mu_s - sqrt((1.0 - mu * mu) * (1.0 - mu_s * mu_s)),
+                   mu * mu_s + sqrt((1.0 - mu * mu) * (1.0 - mu_s * mu_s)));
+    
+    // Integrate scattering density along ray
+    float dx = DistanceToNearestAtmosphereBoundary(r, mu, ray_r_mu_intersects_ground) / float(SAMPLE_COUNT);
+    vec3 rayleigh_mie_sum = vec3(0.0);
+    
+    for (int i = 0; i <= SAMPLE_COUNT; ++i) {
+        float d_i = float(i) * dx;
+        
+        float r_i = ClampRadius(sqrt(d_i * d_i + 2.0 * r * mu * d_i + r * r));
+        float mu_i = ClampCosine((r * mu + d_i) / r_i);
+        float mu_s_i = ClampCosine((r * mu_s + d_i * nu) / r_i);
+        
+        vec3 scattering_density_i = SampleScatteringDensity(r_i, mu_i, mu_s_i, nu, ray_r_mu_intersects_ground);
+        vec3 transmittance_i = GetTransmittance(r, mu, d_i, ray_r_mu_intersects_ground);
+        
+        float weight_i = (i == 0 || i == SAMPLE_COUNT) ? 0.5 : 1.0;
+        rayleigh_mie_sum += scattering_density_i * transmittance_i * weight_i * dx;
+    }
+    
+    fragColor = vec4(rayleigh_mie_sum, nu);
 }
 ''')
     
@@ -1154,13 +1721,16 @@ class GPUPrecomputeV2:
         return gpu.types.GPUTexture(size=(tiled_width, height), format='RGBA32F', data=buf)
     
     def precompute_indirect_irradiance(self, scattering: np.ndarray, 
-                                       delta_mie: np.ndarray) -> np.ndarray:
+                                       delta_mie: np.ndarray,
+                                       scattering_order: int = 1,
+                                       delta_multiple_scattering: np.ndarray = None) -> np.ndarray:
         """
-        Compute indirect irradiance from single scattering (order 1).
+        Compute indirect irradiance from scattered light.
         
-        This integrates the single scattered radiance over the hemisphere.
+        For order 1: integrates single scattering with phase functions.
+        For order 2+: integrates delta_multiple_scattering directly.
         """
-        print("[Helios GPU v2] Computing indirect irradiance (order 1)...")
+        print(f"[Helios GPU v2] Computing indirect irradiance (order {scattering_order})...")
         
         # Extract rayleigh from scattering (RGB channels)
         delta_rayleigh = scattering[:, :, :, :3].copy()
@@ -1168,6 +1738,15 @@ class GPUPrecomputeV2:
         # Create GPU textures for single scattering
         single_rayleigh_tex = self._create_scattering_texture(delta_rayleigh)
         single_mie_tex = self._create_scattering_texture(delta_mie)
+        
+        # For order 2+, we need the multiple scattering texture
+        if delta_multiple_scattering is not None:
+            multiple_scattering_tex = self._create_scattering_texture(delta_multiple_scattering[:,:,:,:3])
+        else:
+            # Dummy texture for order 1
+            dummy = np.zeros((SCATTERING_TEXTURE_DEPTH, SCATTERING_TEXTURE_HEIGHT,
+                             SCATTERING_TEXTURE_WIDTH, 3), dtype=np.float32)
+            multiple_scattering_tex = self._create_scattering_texture(dummy)
         
         shader = create_indirect_irradiance_shader()
         
@@ -1180,7 +1759,7 @@ class GPUPrecomputeV2:
             'top_radius': float(p.top_radius),
             'mu_s_min': float(mu_s_min),
             'mie_phase_g': float(p.mie_phase_g),
-            'scattering_order': 1,
+            'scattering_order': scattering_order,
         }
         
         pixels = self._render_to_texture(
@@ -1191,26 +1770,153 @@ class GPUPrecomputeV2:
             textures={
                 'single_rayleigh_texture': single_rayleigh_tex,
                 'single_mie_texture': single_mie_tex,
+                'multiple_scattering_texture': multiple_scattering_tex,
             }
         )
         
         irradiance = pixels[:, :, :3].astype(np.float32)
         
-        print(f"  [DEBUG] Indirect irradiance (order 1) range: min={irradiance.min():.6f}, max={irradiance.max():.6f}")
+        print(f"  [DEBUG] Indirect irradiance (order {scattering_order}) range: min={irradiance.min():.6f}, max={irradiance.max():.6f}")
         
         return irradiance
+    
+    def _create_irradiance_texture(self, data: np.ndarray) -> 'gpu.types.GPUTexture':
+        """Create GPU texture from 2D irradiance data."""
+        height, width = data.shape[:2]
+        channels = data.shape[2] if len(data.shape) > 2 else 1
+        
+        if channels >= 3:
+            tex_data = np.zeros((height, width, 4), dtype=np.float32)
+            tex_data[:, :, :channels] = data[:, :, :channels]
+            tex_data[:, :, 3] = 1.0
+        else:
+            tex_data = np.zeros((height, width, 4), dtype=np.float32)
+            tex_data[:, :, 0] = data.squeeze()
+            tex_data[:, :, 3] = 1.0
+        
+        buf = gpu.types.Buffer('FLOAT', width * height * 4, tex_data.flatten().tolist())
+        return gpu.types.GPUTexture(size=(width, height), format='RGBA32F', data=buf)
+    
+    def precompute_scattering_density(self, scattering_order: int,
+                                       delta_rayleigh: np.ndarray,
+                                       delta_mie: np.ndarray,
+                                       delta_multiple_scattering: np.ndarray,
+                                       delta_irradiance: np.ndarray) -> np.ndarray:
+        """
+        Compute scattering density for a given order.
+        
+        This is the first step of each multiple scattering iteration.
+        """
+        print(f"[Helios GPU v2] Computing scattering density (order {scattering_order})...")
+        
+        # Create GPU textures
+        single_rayleigh_tex = self._create_scattering_texture(delta_rayleigh)
+        single_mie_tex = self._create_scattering_texture(delta_mie)
+        multiple_scattering_tex = self._create_scattering_texture(delta_multiple_scattering)
+        irradiance_tex = self._create_irradiance_texture(delta_irradiance)
+        
+        shader = create_scattering_density_shader()
+        
+        p = self.params
+        import math
+        mu_s_min = math.cos(102.0 / 180.0 * math.pi)
+        
+        # Allocate output
+        scattering_density = np.zeros((SCATTERING_TEXTURE_DEPTH, SCATTERING_TEXTURE_HEIGHT, 
+                                       SCATTERING_TEXTURE_WIDTH, 3), dtype=np.float32)
+        
+        # Render each layer
+        for layer in range(SCATTERING_TEXTURE_DEPTH):
+            uniforms = {
+                'bottom_radius': float(p.bottom_radius),
+                'top_radius': float(p.top_radius),
+                'mu_s_min': float(mu_s_min),
+                'mie_phase_g': float(p.mie_phase_g),
+                'ground_albedo': float(p.ground_albedo),
+                'rayleigh_scattering': p.rayleigh_scattering,
+                'mie_scattering': p.mie_scattering,
+                'scattering_order': scattering_order,
+                'layer': layer,
+            }
+            
+            pixels = self._render_to_texture(
+                shader,
+                SCATTERING_TEXTURE_WIDTH,
+                SCATTERING_TEXTURE_HEIGHT,
+                uniforms,
+                textures={
+                    'transmittance_texture': self._transmittance_texture,
+                    'single_rayleigh_texture': single_rayleigh_tex,
+                    'single_mie_texture': single_mie_tex,
+                    'multiple_scattering_texture': multiple_scattering_tex,
+                    'irradiance_texture': irradiance_tex,
+                }
+            )
+            
+            scattering_density[layer] = pixels[:, :, :3]
+        
+        print(f"  [DEBUG] Scattering density range: min={scattering_density.min():.6f}, max={scattering_density.max():.6f}")
+        
+        return scattering_density
+    
+    def precompute_multiple_scattering(self, scattering_density: np.ndarray) -> np.ndarray:
+        """
+        Compute multiple scattering from scattering density.
+        
+        This is the second step of each multiple scattering iteration.
+        """
+        print("[Helios GPU v2] Computing multiple scattering...")
+        
+        # Create GPU texture for scattering density
+        scattering_density_tex = self._create_scattering_texture(scattering_density)
+        
+        shader = create_multiple_scattering_shader()
+        
+        p = self.params
+        import math
+        mu_s_min = math.cos(102.0 / 180.0 * math.pi)
+        
+        # Allocate output (4 channels - RGB + nu in alpha)
+        delta_multiple_scattering = np.zeros((SCATTERING_TEXTURE_DEPTH, SCATTERING_TEXTURE_HEIGHT,
+                                              SCATTERING_TEXTURE_WIDTH, 4), dtype=np.float32)
+        
+        # Render each layer
+        for layer in range(SCATTERING_TEXTURE_DEPTH):
+            uniforms = {
+                'bottom_radius': float(p.bottom_radius),
+                'top_radius': float(p.top_radius),
+                'mu_s_min': float(mu_s_min),
+                'layer': layer,
+            }
+            
+            pixels = self._render_to_texture(
+                shader,
+                SCATTERING_TEXTURE_WIDTH,
+                SCATTERING_TEXTURE_HEIGHT,
+                uniforms,
+                textures={
+                    'transmittance_texture': self._transmittance_texture,
+                    'scattering_density_texture': scattering_density_tex,
+                }
+            )
+            
+            delta_multiple_scattering[layer] = pixels
+        
+        print(f"  [DEBUG] Delta multiple scattering range: min={delta_multiple_scattering[:,:,:,:3].min():.6f}, max={delta_multiple_scattering[:,:,:,:3].max():.6f}")
+        
+        return delta_multiple_scattering
     
     def precompute(self, num_scattering_orders: int = 4,
                    progress_callback: Callable = None) -> PrecomputedTexturesV2:
         """
-        Run full precomputation.
+        Run full precomputation with multiple scattering.
         
-        V2: Transmittance + Single Scattering + Indirect Irradiance (order 1)
+        V2: Full Bruneton implementation with orders 1-4 scattering.
         """
         import time
         start_time = time.perf_counter()
         
-        print("[Helios GPU v2] Starting precomputation...")
+        print(f"[Helios GPU v2] Starting precomputation (orders 1-{num_scattering_orders})...")
         
         if progress_callback:
             progress_callback(0.0, "Computing transmittance (GPU v2)...")
@@ -1221,33 +1927,89 @@ class GPUPrecomputeV2:
         if progress_callback:
             progress_callback(0.1, "Computing single scattering (GPU v2)...")
         
-        # Step 2: Single Scattering
-        scattering, delta_mie = self.precompute_single_scattering(transmittance)
+        # Step 2: Single Scattering (order 1)
+        # delta_rayleigh stores Rayleigh without phase function
+        # delta_mie stores Mie without phase function
+        delta_rayleigh_mie, delta_mie = self.precompute_single_scattering(transmittance)
+        
+        # Initialize accumulated scattering with single scattering
+        scattering = delta_rayleigh_mie.copy()
         
         if progress_callback:
-            progress_callback(0.5, "Computing direct irradiance (GPU v2)...")
+            progress_callback(0.2, "Computing direct irradiance (GPU v2)...")
         
-        # Step 3: Direct Irradiance (stored separately for scattering density)
-        # IMPORTANT: Reference stores ONLY indirect irradiance in irradiance texture
-        # Direct irradiance is used for scattering density computation but NOT in final texture
+        # Step 3: Direct Irradiance (used internally for scattering density)
         delta_irradiance_direct = self.precompute_direct_irradiance(transmittance)
         
         if progress_callback:
-            progress_callback(0.6, "Computing indirect irradiance (GPU v2)...")
+            progress_callback(0.3, "Computing indirect irradiance order 1 (GPU v2)...")
         
         # Step 4: Indirect Irradiance from single scattering (order 1)
-        # This is the first contribution to the irradiance texture
-        irradiance = self.precompute_indirect_irradiance(scattering, delta_mie)
+        delta_irradiance = self.precompute_indirect_irradiance(delta_rayleigh_mie, delta_mie)
+        irradiance = delta_irradiance.copy()
         
-        print(f"  [DEBUG] Final irradiance range: min={irradiance.min():.6f}, max={irradiance.max():.6f}")
+        print(f"  [DEBUG] After order 1 - irradiance max: {irradiance.max():.6f}")
         
-        # TODO: Add higher order multiple scattering (orders 2-4)
+        # Initialize delta_multiple_scattering for the loop
+        # For order 2, we use single scattering; for order 3+, we use previous delta
+        delta_multiple_scattering = np.zeros((SCATTERING_TEXTURE_DEPTH, SCATTERING_TEXTURE_HEIGHT,
+                                              SCATTERING_TEXTURE_WIDTH, 4), dtype=np.float32)
+        
+        # Step 5: Multiple scattering orders 2, 3, 4, ...
+        for order in range(2, num_scattering_orders + 1):
+            progress_base = 0.3 + (order - 2) * 0.2
+            
+            if progress_callback:
+                progress_callback(progress_base, f"Computing scattering density order {order}...")
+            
+            # For scattering density:
+            # - Order 2: uses single scattering + direct irradiance
+            # - Order 3+: uses previous delta_multiple_scattering + previous delta_irradiance
+            if order == 2:
+                # Use direct irradiance for ground bounce
+                scattering_density = self.precompute_scattering_density(
+                    order, delta_rayleigh_mie, delta_mie, 
+                    delta_multiple_scattering, delta_irradiance_direct
+                )
+            else:
+                # Use previous order's indirect irradiance
+                scattering_density = self.precompute_scattering_density(
+                    order, delta_rayleigh_mie, delta_mie,
+                    delta_multiple_scattering, delta_irradiance
+                )
+            
+            if progress_callback:
+                progress_callback(progress_base + 0.07, f"Computing multiple scattering order {order}...")
+            
+            # Compute delta multiple scattering (n-th order contribution)
+            delta_multiple_scattering = self.precompute_multiple_scattering(scattering_density)
+            
+            # Accumulate into scattering texture
+            # Reference adds delta_multiple_scattering / RayleighPhase to make it phase-function-free
+            # But since we store combined, we just add the RGB values
+            scattering[:, :, :, :3] += delta_multiple_scattering[:, :, :, :3]
+            
+            if progress_callback:
+                progress_callback(progress_base + 0.14, f"Computing indirect irradiance order {order}...")
+            
+            # Compute indirect irradiance for this order
+            # For order 2+, we integrate delta_multiple_scattering (no phase function)
+            delta_irradiance = self.precompute_indirect_irradiance(
+                delta_rayleigh_mie, delta_mie, order, delta_multiple_scattering
+            )
+            
+            # Accumulate into irradiance texture
+            irradiance += delta_irradiance
+            
+            print(f"  [DEBUG] After order {order} - scattering max: {scattering[:,:,:,:3].max():.6f}, irradiance max: {irradiance.max():.6f}")
         
         if progress_callback:
             progress_callback(1.0, "GPU v2 precomputation complete")
         
         total_time = time.perf_counter() - start_time
         print(f"[Helios GPU v2] Complete in {total_time:.2f}s")
+        print(f"  [DEBUG] Final scattering range: min={scattering[:,:,:,:3].min():.6f}, max={scattering[:,:,:,:3].max():.6f}")
+        print(f"  [DEBUG] Final irradiance range: min={irradiance.min():.6f}, max={irradiance.max():.6f}")
         
         return PrecomputedTexturesV2(
             transmittance=transmittance,
