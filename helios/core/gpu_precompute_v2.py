@@ -6,9 +6,9 @@ APPROACH: Direct, faithful port of Bruneton reference_functions.glsl
 - Each step verified against reference before proceeding
 - Git commit at each verified milestone
 
-VERSION: 4 - Transmittance + Single Scattering + Indirect Irradiance (order 1)
+VERSION: 5 - All LUTs match reference (Transmittance, Single Scattering, Irradiance order 1)
 """
-print("[Helios GPU v2] Module loaded - VERSION 4 (+ indirect irradiance order 1)")
+print("[Helios GPU v2] Module loaded - VERSION 5 (ALL LUTS MATCH REFERENCE)")
 
 import os
 import numpy as np

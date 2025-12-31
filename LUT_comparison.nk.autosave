@@ -91,15 +91,87 @@ Read {
 Read {
  inputs 0
  file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/irradiance.exr
+ format "64 16 0 0 64 16 1 "
+ origset true
+ version 72
+ name Read5
+ xpos 918
+ ypos 81
+}
+Shuffle2 {
+ fromInput1 {{0} B}
+ fromInput2 {{0} B}
+ mappings "4 rgba.red 0 0 rgba.red 0 0 rgba.green 0 1 rgba.green 0 1 rgba.blue 0 2 rgba.blue 0 2 white -1 -1 rgba.alpha 0 3"
+ name Shuffle3
+ xpos 918
+ ypos 165
+}
+Crop {
+ box {0 0 64 16}
+ name Crop6
+ xpos 918
+ ypos 189
+}
+push 0
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/helios_cache/luts_backup_working/irradiance.exr
+ format "64 16 0 0 64 16 1 "
+ origset true
+ name Read4
+ xpos 558
+ ypos -135
+}
+Shuffle2 {
+ fromInput1 {{0} B}
+ fromInput2 {{0} B}
+ mappings "4 rgba.red 0 0 rgba.red 0 0 rgba.green 0 1 rgba.green 0 1 rgba.blue 0 2 rgba.blue 0 2 white -1 -1 rgba.alpha 0 3"
+ name Shuffle4
+ xpos 558
+ ypos -33
+}
+Crop {
+ box {0 0 64 16}
+ name Crop5
+ xpos 558
+ ypos -9
+}
+Transform {
+ translate {0 16}
+ center {32 8}
+ name Transform2
+ xpos 558
+ ypos 15
+}
+Reformat {
+ inputs 0
+ format "64 32 0 0 64 32 1 irradiance_compare"
+ name Reformat2
+ xpos 730
+ ypos 249
+}
+Merge2 {
+ inputs 3+1
+ name Merge2
+ xpos 840
+ ypos 327
+}
+Read {
+ inputs 0
+ file_type exr
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/scattering.exr
  format "8192 128 0 0 8192 128 1 "
  origset true
- version 39
+ version 40
  name Read6
+ selected true
  xpos 510
  ypos 45
 }
 set N655ed800 [stack 0]
+push $N655ed800
 Shuffle2 {
  fromInput1 {{0} B}
  fromInput2 {{0} B}
@@ -175,78 +247,6 @@ Merge2 {
  name Merge1
  xpos 400
  ypos 303
-}
-push $N655ed800
-Read {
- inputs 0
- file_type exr
- file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/irradiance.exr
- format "64 16 0 0 64 16 1 "
- origset true
- version 71
- name Read5
- selected true
- xpos 918
- ypos 81
-}
-Shuffle2 {
- fromInput1 {{0} B}
- fromInput2 {{0} B}
- mappings "4 rgba.red 0 0 rgba.red 0 0 rgba.green 0 1 rgba.green 0 1 rgba.blue 0 2 rgba.blue 0 2 white -1 -1 rgba.alpha 0 3"
- name Shuffle3
- xpos 918
- ypos 165
-}
-Crop {
- box {0 0 64 16}
- name Crop6
- xpos 918
- ypos 189
-}
-push 0
-Read {
- inputs 0
- file_type exr
- file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/helios_cache/luts_backup_working/irradiance.exr
- format "64 16 0 0 64 16 1 "
- origset true
- name Read4
- xpos 558
- ypos -135
-}
-Shuffle2 {
- fromInput1 {{0} B}
- fromInput2 {{0} B}
- mappings "4 rgba.red 0 0 rgba.red 0 0 rgba.green 0 1 rgba.green 0 1 rgba.blue 0 2 rgba.blue 0 2 white -1 -1 rgba.alpha 0 3"
- name Shuffle4
- xpos 558
- ypos -33
-}
-Crop {
- box {0 0 64 16}
- name Crop5
- xpos 558
- ypos -9
-}
-Transform {
- translate {0 16}
- center {32 8}
- name Transform2
- xpos 558
- ypos 15
-}
-Reformat {
- inputs 0
- format "64 32 0 0 64 32 1 irradiance_compare"
- name Reformat2
- xpos 730
- ypos 249
-}
-Merge2 {
- inputs 3+1
- name Merge2
- xpos 840
- ypos 327
 }
 Viewer {
  inputs 2
