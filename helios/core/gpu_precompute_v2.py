@@ -1,0 +1,424 @@
+"""
+GPU-accelerated LUT precomputation - Fresh implementation v2.
+
+APPROACH: Direct, faithful port of Bruneton reference_functions.glsl
+- No optimizations until baseline matches reference
+- Each step verified against reference before proceeding
+- Git commit at each verified milestone
+
+VERSION: 1 - Transmittance only (baseline)
+"""
+print("[Helios GPU v2] Module loaded - VERSION 1 (transmittance baseline)")
+
+import numpy as np
+from typing import Optional, Tuple
+from dataclasses import dataclass
+
+try:
+    import bpy
+    import gpu
+    from gpu_extras.batch import batch_for_shader
+    IN_BLENDER = True
+except ImportError:
+    IN_BLENDER = False
+    print("[Helios GPU v2] Not running in Blender - GPU functions unavailable")
+
+# =============================================================================
+# TEXTURE DIMENSIONS - Match reference exactly
+# =============================================================================
+TRANSMITTANCE_TEXTURE_WIDTH = 256
+TRANSMITTANCE_TEXTURE_HEIGHT = 64
+
+SCATTERING_TEXTURE_R_SIZE = 32
+SCATTERING_TEXTURE_MU_SIZE = 128
+SCATTERING_TEXTURE_MU_S_SIZE = 32
+SCATTERING_TEXTURE_NU_SIZE = 8
+SCATTERING_TEXTURE_WIDTH = SCATTERING_TEXTURE_MU_S_SIZE * SCATTERING_TEXTURE_NU_SIZE  # 256
+SCATTERING_TEXTURE_HEIGHT = SCATTERING_TEXTURE_MU_SIZE  # 128
+SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE  # 32
+
+IRRADIANCE_TEXTURE_WIDTH = 64
+IRRADIANCE_TEXTURE_HEIGHT = 16
+
+# =============================================================================
+# ATMOSPHERE PARAMETERS - Match reference demo.cc exactly
+# =============================================================================
+@dataclass
+class AtmosphereParams:
+    """Atmosphere parameters matching reference demo.cc"""
+    # Radii in meters
+    bottom_radius: float = 6360000.0
+    top_radius: float = 6420000.0
+    
+    # Rayleigh scattering coefficients at RGB wavelengths (m^-1)
+    # Computed as: kRayleigh * pow(lambda, -4) where lambda is in micrometers
+    # kRayleigh = 1.24062e-6
+    # Red (680nm=0.68um): 1.24062e-6 * 0.68^-4 = 5.802e-6
+    # Green (550nm=0.55um): 1.24062e-6 * 0.55^-4 = 13.558e-6
+    # Blue (440nm=0.44um): 1.24062e-6 * 0.44^-4 = 33.1e-6
+    rayleigh_scattering: Tuple[float, float, float] = (5.802e-6, 13.558e-6, 33.1e-6)
+    rayleigh_scale_height: float = 8000.0
+    
+    # Mie scattering/extinction coefficients (m^-1)
+    # mie = kMieAngstromBeta / kMieScaleHeight * pow(lambda, -kMieAngstromAlpha)
+    # With kMieAngstromAlpha=0, kMieAngstromBeta=5.328e-3, kMieScaleHeight=1200:
+    # mie = 5.328e-3 / 1200 = 4.44e-6 (wavelength independent)
+    # mie_scattering = mie * kMieSingleScatteringAlbedo = 4.44e-6 * 0.9 = 4.0e-6
+    mie_scattering: Tuple[float, float, float] = (4.0e-6, 4.0e-6, 4.0e-6)
+    mie_extinction: Tuple[float, float, float] = (4.44e-6, 4.44e-6, 4.44e-6)
+    mie_scale_height: float = 1200.0
+    mie_phase_g: float = 0.8
+    
+    # Ozone absorption extinction at RGB wavelengths (m^-1)
+    # Computed from kMaxOzoneNumberDensity * kOzoneCrossSection[wavelength_index]
+    # These values are for use_ozone=true
+    absorption_extinction: Tuple[float, float, float] = (0.650e-6, 1.881e-6, 0.085e-6)
+    
+    # Solar irradiance at RGB wavelengths (W/m^2/nm)
+    # From kSolarIrradiance array at indices for 680nm, 550nm, 440nm
+    solar_irradiance: Tuple[float, float, float] = (1.474, 1.8504, 1.91198)
+    
+    # Sun angular radius
+    sun_angular_radius: float = 0.004675  # radians
+    
+    # Ground albedo
+    ground_albedo: float = 0.1
+
+
+# =============================================================================
+# TRANSMITTANCE SHADER - Direct port of reference
+# =============================================================================
+def create_transmittance_shader() -> 'gpu.types.GPUShader':
+    """
+    Create transmittance precomputation shader.
+    
+    Direct port of reference ComputeTransmittanceToTopAtmosphereBoundary.
+    Uses GetRMuFromTransmittanceTextureUv for coordinate mapping.
+    """
+    shader_info = gpu.types.GPUShaderCreateInfo()
+    
+    shader_info.vertex_in(0, 'VEC2', 'pos')
+    
+    vert_out = gpu.types.GPUStageInterfaceInfo("vert_iface")
+    vert_out.smooth('VEC2', 'uv')
+    shader_info.vertex_out(vert_out)
+    
+    # Push constants for atmosphere parameters
+    shader_info.push_constant('FLOAT', 'bottom_radius')
+    shader_info.push_constant('FLOAT', 'top_radius')
+    shader_info.push_constant('VEC3', 'rayleigh_scattering')
+    shader_info.push_constant('FLOAT', 'rayleigh_scale_height')
+    shader_info.push_constant('VEC3', 'mie_extinction')
+    shader_info.push_constant('FLOAT', 'mie_scale_height')
+    shader_info.push_constant('VEC3', 'absorption_extinction')
+    
+    shader_info.fragment_out(0, 'VEC4', 'fragColor')
+    
+    shader_info.vertex_source('''
+void main() {
+    uv = pos * 0.5 + 0.5;
+    gl_Position = vec4(pos, 0.0, 1.0);
+}
+''')
+    
+    # Fragment shader - DIRECT PORT of reference functions.glsl
+    shader_info.fragment_source('''
+#define TRANSMITTANCE_TEXTURE_WIDTH 256
+#define TRANSMITTANCE_TEXTURE_HEIGHT 64
+#define SAMPLE_COUNT 500
+
+// =============================================================================
+// Utility functions - exact match to reference
+// =============================================================================
+
+float SafeSqrt(float x) {
+    return sqrt(max(x, 0.0));
+}
+
+float ClampCosine(float mu) {
+    return clamp(mu, -1.0, 1.0);
+}
+
+float ClampDistance(float d) {
+    return max(d, 0.0);
+}
+
+float ClampRadius(float r) {
+    return clamp(r, bottom_radius, top_radius);
+}
+
+// Reference: GetUnitRangeFromTextureCoord (line 346)
+float GetUnitRangeFromTextureCoord(float u, float texture_size) {
+    return (u - 0.5 / texture_size) / (1.0 - 1.0 / texture_size);
+}
+
+// Reference: DistanceToTopAtmosphereBoundary (line 207)
+float DistanceToTopAtmosphereBoundary(float r, float mu) {
+    float discriminant = r * r * (mu * mu - 1.0) + top_radius * top_radius;
+    return ClampDistance(-r * mu + SafeSqrt(discriminant));
+}
+
+// =============================================================================
+// Density profiles - exact match to reference demo.cc
+// =============================================================================
+
+// Reference: GetLayerDensity (line 263)
+// For Rayleigh: exp_term=1.0, exp_scale=-1/8000, linear_term=0, constant_term=0
+// For Mie: exp_term=1.0, exp_scale=-1/1200, linear_term=0, constant_term=0
+float GetRayleighDensity(float altitude) {
+    float density = exp(-altitude / rayleigh_scale_height);
+    return clamp(density, 0.0, 1.0);
+}
+
+float GetMieDensity(float altitude) {
+    float density = exp(-altitude / mie_scale_height);
+    return clamp(density, 0.0, 1.0);
+}
+
+// Ozone density profile from reference demo.cc (lines 246-250):
+// Layer 0 (altitude < 25km): width=25000, linear_term=1/15000, constant_term=-2/3
+// Layer 1 (altitude >= 25km): width=0, linear_term=-1/15000, constant_term=8/3
+// Note: Layer 1 uses ABSOLUTE altitude in the linear term (not relative)
+float GetOzoneDensity(float altitude) {
+    float density;
+    if (altitude < 25000.0) {
+        // Layer 0: density = linear_term * altitude + constant_term
+        density = altitude / 15000.0 - 2.0 / 3.0;
+    } else {
+        // Layer 1: density = linear_term * altitude + constant_term
+        // Uses absolute altitude (not relative to layer boundary)
+        density = -altitude / 15000.0 + 8.0 / 3.0;
+    }
+    return clamp(density, 0.0, 1.0);
+}
+
+// =============================================================================
+// Main transmittance computation - reference lines 275-319
+// =============================================================================
+
+void main() {
+    // Reference: GetRMuFromTransmittanceTextureUv (lines 427-447)
+    float x_mu = GetUnitRangeFromTextureCoord(uv.x, float(TRANSMITTANCE_TEXTURE_WIDTH));
+    float x_r = GetUnitRangeFromTextureCoord(uv.y, float(TRANSMITTANCE_TEXTURE_HEIGHT));
+    
+    // Distance to top atmosphere boundary for a horizontal ray at ground level
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    
+    // Distance to the horizon, from which we can compute r
+    float rho = H * x_r;
+    float r = sqrt(rho * rho + bottom_radius * bottom_radius);
+    
+    // Distance to the top atmosphere boundary for the ray (r,mu)
+    float d_min = top_radius - r;
+    float d_max = rho + H;
+    float d = d_min + x_mu * (d_max - d_min);
+    
+    // Recover mu from d
+    float mu = (d == 0.0) ? 1.0 : (H * H - rho * rho - d * d) / (2.0 * r * d);
+    mu = ClampCosine(mu);
+    
+    // Reference: ComputeOpticalLengthToTopAtmosphereBoundary (lines 275-298)
+    // Compute for each density profile separately, then combine
+    float dist = DistanceToTopAtmosphereBoundary(r, mu);
+    float dx = dist / float(SAMPLE_COUNT);
+    
+    // Integration using trapezoidal rule
+    float rayleigh_optical_length = 0.0;
+    float mie_optical_length = 0.0;
+    float ozone_optical_length = 0.0;
+    
+    for (int i = 0; i <= SAMPLE_COUNT; ++i) {
+        float d_i = float(i) * dx;
+        
+        // Distance from current sample point to planet center
+        float r_i = sqrt(d_i * d_i + 2.0 * r * mu * d_i + r * r);
+        
+        // Altitude above ground
+        float altitude = r_i - bottom_radius;
+        
+        // Sample densities at this altitude
+        float rayleigh_density = GetRayleighDensity(altitude);
+        float mie_density = GetMieDensity(altitude);
+        float ozone_density = GetOzoneDensity(altitude);
+        
+        // Trapezoidal weight
+        float weight = (i == 0 || i == SAMPLE_COUNT) ? 0.5 : 1.0;
+        
+        // Accumulate optical lengths
+        rayleigh_optical_length += rayleigh_density * weight * dx;
+        mie_optical_length += mie_density * weight * dx;
+        ozone_optical_length += ozone_density * weight * dx;
+    }
+    
+    // Reference: ComputeTransmittanceToTopAtmosphereBoundary (lines 306-319)
+    // transmittance = exp(-(rayleigh_scattering * rayleigh_length + 
+    //                       mie_extinction * mie_length +
+    //                       absorption_extinction * ozone_length))
+    vec3 optical_depth = rayleigh_scattering * rayleigh_optical_length +
+                         mie_extinction * mie_optical_length +
+                         absorption_extinction * ozone_optical_length;
+    
+    fragColor = vec4(exp(-optical_depth), 1.0);
+}
+''')
+    
+    return gpu.shader.create_from_info(shader_info)
+
+
+# =============================================================================
+# GPU PRECOMPUTE MODEL
+# =============================================================================
+class GPUPrecomputeModelV2:
+    """
+    Fresh GPU LUT precomputation - faithful to Bruneton reference.
+    
+    Each step is verified against reference before proceeding.
+    """
+    
+    def __init__(self, params: Optional[AtmosphereParams] = None):
+        self.params = params or AtmosphereParams()
+        self._transmittance_texture = None
+        self._is_initialized = False
+    
+    def _render_to_texture(self, shader: 'gpu.types.GPUShader',
+                           width: int, height: int,
+                           uniforms: dict) -> np.ndarray:
+        """Render shader to offscreen buffer and read back pixels."""
+        offscreen = gpu.types.GPUOffScreen(width, height, format='RGBA32F')
+        
+        vertices = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
+        indices = [(0, 1, 2), (0, 2, 3)]
+        
+        batch = batch_for_shader(shader, 'TRIS', {"pos": vertices}, indices=indices)
+        
+        with offscreen.bind():
+            gpu.state.depth_test_set('NONE')
+            gpu.state.blend_set('NONE')
+            
+            shader.bind()
+            
+            for name, value in uniforms.items():
+                try:
+                    if isinstance(value, int):
+                        shader.uniform_int(name, value)
+                    elif isinstance(value, float):
+                        shader.uniform_float(name, value)
+                    elif isinstance(value, (tuple, list)):
+                        shader.uniform_float(name, value)
+                except (ValueError, TypeError):
+                    pass
+            
+            batch.draw(shader)
+        
+        buffer = offscreen.texture_color.read()
+        offscreen.free()
+        
+        pixels = np.array(buffer.to_list(), dtype=np.float32)
+        pixels = pixels.reshape(height, width, 4)
+        
+        return pixels
+    
+    def precompute_transmittance(self) -> np.ndarray:
+        """
+        Precompute transmittance LUT.
+        
+        This is the first step - must match reference before proceeding.
+        """
+        print("[Helios GPU v2] Computing transmittance...")
+        
+        shader = create_transmittance_shader()
+        
+        p = self.params
+        uniforms = {
+            'bottom_radius': float(p.bottom_radius),
+            'top_radius': float(p.top_radius),
+            'rayleigh_scattering': p.rayleigh_scattering,
+            'rayleigh_scale_height': float(p.rayleigh_scale_height),
+            'mie_extinction': p.mie_extinction,
+            'mie_scale_height': float(p.mie_scale_height),
+            'absorption_extinction': p.absorption_extinction,
+        }
+        
+        print(f"  [DEBUG] Uniforms: bottom_radius={p.bottom_radius}, top_radius={p.top_radius}")
+        print(f"  [DEBUG] rayleigh_scattering={p.rayleigh_scattering}")
+        print(f"  [DEBUG] mie_extinction={p.mie_extinction}")
+        print(f"  [DEBUG] absorption_extinction={p.absorption_extinction}")
+        
+        pixels = self._render_to_texture(
+            shader,
+            TRANSMITTANCE_TEXTURE_WIDTH,
+            TRANSMITTANCE_TEXTURE_HEIGHT,
+            uniforms
+        )
+        
+        transmittance = pixels[:, :, :3].astype(np.float32)
+        
+        print(f"  [DEBUG] Transmittance range: min={transmittance.min():.6f}, max={transmittance.max():.6f}")
+        print(f"  [DEBUG] Transmittance center pixel [32, 128]: {transmittance[32, 128, :]}")
+        
+        return transmittance
+    
+    def precompute(self, num_scattering_orders: int = 4) -> dict:
+        """
+        Run full precomputation.
+        
+        Currently only transmittance is implemented for baseline verification.
+        """
+        print("[Helios GPU v2] Starting precomputation (baseline version)...")
+        
+        # Step 1: Transmittance (must verify before continuing)
+        transmittance = self.precompute_transmittance()
+        
+        self._is_initialized = True
+        
+        return {
+            'transmittance': transmittance,
+        }
+
+
+# =============================================================================
+# TEST FUNCTION
+# =============================================================================
+def test_transmittance():
+    """Test transmittance computation and compare with reference."""
+    print("=" * 60)
+    print("TRANSMITTANCE BASELINE TEST")
+    print("=" * 60)
+    
+    model = GPUPrecomputeModelV2()
+    result = model.precompute()
+    
+    transmittance = result['transmittance']
+    
+    print(f"\nTransmittance shape: {transmittance.shape}")
+    print(f"Expected shape: ({TRANSMITTANCE_TEXTURE_HEIGHT}, {TRANSMITTANCE_TEXTURE_WIDTH}, 3)")
+    
+    # Load reference for comparison
+    import os
+    ref_path = r"c:\Users\space\Documents\mattepaint\dev\atmospheric-scattering-4\cache\reference_transmittance.npy"
+    if os.path.exists(ref_path):
+        reference = np.load(ref_path)
+        print(f"\nReference shape: {reference.shape}")
+        
+        # Compare
+        diff = np.abs(transmittance - reference[:, :, :3])
+        print(f"Max difference: {diff.max():.6f}")
+        print(f"Mean difference: {diff.mean():.6f}")
+        
+        # Per-channel comparison
+        for i, c in enumerate(['R', 'G', 'B']):
+            ch_diff = diff[:, :, i]
+            print(f"  {c}: max={ch_diff.max():.6f}, mean={ch_diff.mean():.6f}")
+    else:
+        print(f"\nReference not found at {ref_path}")
+        print("Run the reference app to generate comparison data.")
+    
+    print("=" * 60)
+    return transmittance
+
+
+if __name__ == "__main__":
+    if IN_BLENDER:
+        test_transmittance()
+    else:
+        print("Run this script in Blender's Python console.")
