@@ -48,44 +48,21 @@ def _update_preview(self, context):
 _debounce_timer = None
 
 def _do_recompute_luts(context):
-    """Actually perform the LUT recomputation (called after debounce delay)."""
-    from . import core
+    """Actually perform the LUT recomputation (called after debounce delay).
+    
+    Uses the operator for proper GPU context (timer callbacks have degraded GPU performance).
+    """
     from . import world as world_module
     
-    scene = context.scene
-    settings = scene.helios
-    
-    # Determine quality based on preview setting
-    is_preview = settings.preview_quality == 'PREVIEW'
-    num_orders = 2 if is_preview else 4
-    
     try:
-        # Get LUT cache directory
-        lut_dir = world_module.get_lut_cache_dir()
-        
-        # Create atmosphere parameters from current settings
-        params = core.parameters.AtmosphereParameters.from_blender_settings(settings)
-        
-        # Precompute LUTs using GPU if available
-        quality_str = "PREVIEW" if is_preview else "FINAL"
-        print(f"Helios: Auto-recomputing LUTs ({quality_str}, {num_orders} orders)...")
-        if core.BLENDER_GPU_AVAILABLE:
-            model = core.BlenderGPUAtmosphereModel(params)
-            model.init(num_scattering_orders=num_orders, preview_mode=is_preview)
-        else:
-            model = core.model.AtmosphereModel(params)
-            model.init(num_scattering_orders=num_orders)
-        
-        # Save LUTs as EXR files
-        import os
-        os.makedirs(lut_dir, exist_ok=True)
-        model.save_textures_exr(lut_dir)
-        
-        settings.luts_valid = True
-        print("Helios: LUT recomputation complete")
+        # Call the precompute operator - this has proper GPU context
+        # The operator reads preview_quality from settings automatically
+        print("Helios: Auto-recomputing LUTs via operator...")
+        bpy.ops.helios.precompute_luts('EXEC_DEFAULT')
         
         # Force shader rebuild to refresh texture cache
         world = context.scene.world
+        settings = context.scene.helios
         if world and world.use_nodes and world.get("is_helios"):
             # Clear nodes and rebuild to force texture reload
             world.node_tree.nodes.clear()

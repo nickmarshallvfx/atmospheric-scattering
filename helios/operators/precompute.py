@@ -61,9 +61,13 @@ class HELIOS_OT_precompute_luts(Operator):
             print(f"Helios: {message} ({int(progress*100)}%)")
             sys.stdout.flush()
         
+        # Determine quality based on preview setting
+        is_preview = settings.preview_quality == 'PREVIEW'
+        num_orders = 2 if is_preview else 4
+        
         context.window_manager.progress_begin(0, 100)
         try:
-            model.init(num_scattering_orders=4, progress_callback=progress_callback)
+            model.init(num_scattering_orders=num_orders, preview_mode=is_preview, progress_callback=progress_callback)
             
             # Save textures as EXR - use blend file directory or user config
             blend_path = bpy.data.filepath
