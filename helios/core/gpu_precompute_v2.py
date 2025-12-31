@@ -6,9 +6,9 @@ APPROACH: Direct, faithful port of Bruneton reference_functions.glsl
 - Each step verified against reference before proceeding
 - Git commit at each verified milestone
 
-VERSION: 2 - Transmittance + Single Scattering
+VERSION: 3 - Transmittance + Single Scattering + Direct Irradiance
 """
-print("[Helios GPU v2] Module loaded - VERSION 2 (transmittance + single scattering)")
+print("[Helios GPU v2] Module loaded - VERSION 3 (+ direct irradiance)")
 
 import os
 import numpy as np
@@ -583,6 +583,152 @@ void main() {
 
 
 # =============================================================================
+# DIRECT IRRADIANCE SHADER - Direct port of reference
+# =============================================================================
+def create_direct_irradiance_shader() -> 'gpu.types.GPUShader':
+    """
+    Create direct irradiance precomputation shader.
+    
+    Direct port of reference ComputeDirectIrradianceTexture.
+    """
+    shader_info = gpu.types.GPUShaderCreateInfo()
+    
+    shader_info.vertex_in(0, 'VEC2', 'pos')
+    
+    vert_out = gpu.types.GPUStageInterfaceInfo("vert_iface")
+    vert_out.smooth('VEC2', 'uv')
+    shader_info.vertex_out(vert_out)
+    
+    # Push constants
+    shader_info.push_constant('FLOAT', 'bottom_radius')
+    shader_info.push_constant('FLOAT', 'top_radius')
+    
+    # Transmittance texture sampler
+    shader_info.sampler(0, 'FLOAT_2D', 'transmittance_texture')
+    
+    shader_info.fragment_out(0, 'VEC4', 'fragColor')
+    
+    shader_info.vertex_source('''
+void main() {
+    uv = pos * 0.5 + 0.5;
+    gl_Position = vec4(pos, 0.0, 1.0);
+}
+''')
+    
+    # Fragment shader - DIRECT PORT of reference functions.glsl
+    shader_info.fragment_source('''
+#define TRANSMITTANCE_TEXTURE_WIDTH 256
+#define TRANSMITTANCE_TEXTURE_HEIGHT 64
+#define IRRADIANCE_TEXTURE_WIDTH 64
+#define IRRADIANCE_TEXTURE_HEIGHT 16
+
+// Atmosphere constants - hardcoded to match reference exactly
+const float sun_angular_radius = 0.004675;
+
+// Solar irradiance at RGB wavelengths
+const vec3 solar_irradiance = vec3(1.474, 1.8504, 1.91198);
+
+// =============================================================================
+// Utility functions - exact match to reference
+// =============================================================================
+
+float SafeSqrt(float x) {
+    return sqrt(max(x, 0.0));
+}
+
+float ClampCosine(float mu) {
+    return clamp(mu, -1.0, 1.0);
+}
+
+float ClampDistance(float d) {
+    return max(d, 0.0);
+}
+
+float GetTextureCoordFromUnitRange(float x, float texture_size) {
+    return 0.5 / texture_size + x * (1.0 - 1.0 / texture_size);
+}
+
+float GetUnitRangeFromTextureCoord(float u, float texture_size) {
+    return (u - 0.5 / texture_size) / (1.0 - 1.0 / texture_size);
+}
+
+// Reference: DistanceToTopAtmosphereBoundary (line 207)
+float DistanceToTopAtmosphereBoundary(float r, float mu) {
+    float discriminant = r * r * (mu * mu - 1.0) + top_radius * top_radius;
+    return ClampDistance(-r * mu + SafeSqrt(discriminant));
+}
+
+// =============================================================================
+// Transmittance texture lookup - reference lines 460-480
+// =============================================================================
+
+vec3 GetTransmittanceToTopAtmosphereBoundary(float r, float mu) {
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    float d = DistanceToTopAtmosphereBoundary(r, mu);
+    float d_min = top_radius - r;
+    float d_max = rho + H;
+    float x_mu = (d - d_min) / (d_max - d_min);
+    float x_r = rho / H;
+    vec2 tex_uv = vec2(
+        GetTextureCoordFromUnitRange(x_mu, float(TRANSMITTANCE_TEXTURE_WIDTH)),
+        GetTextureCoordFromUnitRange(x_r, float(TRANSMITTANCE_TEXTURE_HEIGHT))
+    );
+    return texture(transmittance_texture, tex_uv).rgb;
+}
+
+// =============================================================================
+// Irradiance texture coordinate mapping - reference lines 1539-1548
+// =============================================================================
+
+void GetRMuSFromIrradianceTextureUv(vec2 uv_coord, out float r, out float mu_s) {
+    float x_mu_s = GetUnitRangeFromTextureCoord(uv_coord.x, float(IRRADIANCE_TEXTURE_WIDTH));
+    float x_r = GetUnitRangeFromTextureCoord(uv_coord.y, float(IRRADIANCE_TEXTURE_HEIGHT));
+    r = bottom_radius + x_r * (top_radius - bottom_radius);
+    mu_s = ClampCosine(2.0 * x_mu_s - 1.0);
+}
+
+// =============================================================================
+// Direct irradiance computation - reference lines 1443-1461
+// =============================================================================
+
+vec3 ComputeDirectIrradiance(float r, float mu_s) {
+    float alpha_s = sun_angular_radius;
+    
+    // Approximate average of the cosine factor mu_s over the visible fraction
+    // of the Sun disc.
+    float average_cosine_factor;
+    if (mu_s < -alpha_s) {
+        average_cosine_factor = 0.0;
+    } else if (mu_s > alpha_s) {
+        average_cosine_factor = mu_s;
+    } else {
+        average_cosine_factor = (mu_s + alpha_s) * (mu_s + alpha_s) / (4.0 * alpha_s);
+    }
+    
+    return solar_irradiance * 
+           GetTransmittanceToTopAtmosphereBoundary(r, mu_s) * 
+           average_cosine_factor;
+}
+
+// =============================================================================
+// Main - compute direct irradiance for one texel
+// =============================================================================
+
+void main() {
+    float r, mu_s;
+    GetRMuSFromIrradianceTextureUv(uv, r, mu_s);
+    
+    vec3 direct_irradiance = ComputeDirectIrradiance(r, mu_s);
+    
+    fragColor = vec4(direct_irradiance, 1.0);
+}
+''')
+    
+    return gpu.shader.create_from_info(shader_info)
+
+
+# =============================================================================
 # PRECOMPUTED TEXTURES CONTAINER
 # =============================================================================
 @dataclass
@@ -775,12 +921,47 @@ class GPUPrecomputeV2:
         
         return scattering, delta_mie
     
+    def precompute_direct_irradiance(self, transmittance: np.ndarray) -> np.ndarray:
+        """
+        Precompute direct irradiance LUT.
+        
+        Direct port of reference ComputeDirectIrradianceTexture.
+        """
+        print("[Helios GPU v2] Computing direct irradiance...")
+        
+        # Ensure transmittance GPU texture exists
+        if self._transmittance_texture is None:
+            self._create_transmittance_gpu_texture(transmittance)
+        
+        shader = create_direct_irradiance_shader()
+        
+        p = self.params
+        uniforms = {
+            'bottom_radius': float(p.bottom_radius),
+            'top_radius': float(p.top_radius),
+        }
+        
+        pixels = self._render_to_texture(
+            shader,
+            IRRADIANCE_TEXTURE_WIDTH,
+            IRRADIANCE_TEXTURE_HEIGHT,
+            uniforms,
+            textures={'transmittance_texture': self._transmittance_texture}
+        )
+        
+        irradiance = pixels[:, :, :3].astype(np.float32)
+        
+        print(f"  [DEBUG] Direct irradiance range: min={irradiance.min():.6f}, max={irradiance.max():.6f}")
+        print(f"  [DEBUG] Direct irradiance shape: {irradiance.shape}")
+        
+        return irradiance
+    
     def precompute(self, num_scattering_orders: int = 4,
                    progress_callback: Callable = None) -> PrecomputedTexturesV2:
         """
         Run full precomputation.
         
-        V2: Transmittance + Single Scattering
+        V2: Transmittance + Single Scattering + Direct Irradiance
         """
         import time
         start_time = time.perf_counter()
@@ -800,14 +981,15 @@ class GPUPrecomputeV2:
         scattering, delta_mie = self.precompute_single_scattering(transmittance)
         
         if progress_callback:
-            progress_callback(0.5, "Single scattering complete")
+            progress_callback(0.5, "Computing direct irradiance (GPU v2)...")
         
-        # TODO: Add direct irradiance after single scattering verified
+        # Step 3: Direct Irradiance
+        irradiance = self.precompute_direct_irradiance(transmittance)
+        
+        if progress_callback:
+            progress_callback(0.6, "Direct irradiance complete")
+        
         # TODO: Add multiple scattering after direct irradiance verified
-        
-        # Placeholder for irradiance until we implement it
-        irradiance = np.zeros((IRRADIANCE_TEXTURE_HEIGHT, IRRADIANCE_TEXTURE_WIDTH, 3), 
-                              dtype=np.float32)
         
         if progress_callback:
             progress_callback(1.0, "GPU v2 precomputation complete")
