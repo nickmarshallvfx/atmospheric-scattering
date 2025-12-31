@@ -229,6 +229,22 @@ class HeliosAtmosphereSettings(PropertyGroup):
         max=1.0,
         update=_update_preview_invalidate,
     )
+    ozone_density: FloatProperty(
+        name="Ozone Density",
+        description="Ozone layer density multiplier (affects sunset colors)",
+        default=1.0,
+        min=0.0,
+        max=5.0,
+        update=_update_preview_invalidate,
+    )
+    mie_angstrom_beta: FloatProperty(
+        name="Mie Angstrom Beta",
+        description="Aerosol optical thickness at reference wavelength (higher = denser atmosphere)",
+        default=0.04,
+        min=0.0,
+        max=0.5,
+        update=_update_preview_invalidate,
+    )
     
     # Planet Parameters
     planet_radius: FloatProperty(

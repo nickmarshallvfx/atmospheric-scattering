@@ -179,6 +179,8 @@ class AtmosphereParameters:
         mie_height: float = MIE_SCALE_HEIGHT,
         ground_albedo: float = DEFAULT_GROUND_ALBEDO,
         use_ozone: bool = True,
+        ozone_density: float = 1.0,
+        mie_angstrom_beta: float = 0.04,
     ) -> 'AtmosphereParameters':
         """
         Create atmosphere parameters from artistic control values.
@@ -186,11 +188,13 @@ class AtmosphereParameters:
         Args:
             rayleigh_density_scale: Multiplier for air molecule density
             mie_density_scale: Multiplier for aerosol density
-            mie_phase_g: Mie phase function asymmetry (-1 to 1)
+            mie_phase_g: Mie phase function asymmetry parameter
             rayleigh_height: Scale height for air molecules (meters)
             mie_height: Scale height for aerosols (meters)
             ground_albedo: Ground reflectivity (0-1)
             use_ozone: Include ozone absorption layer
+            ozone_density: Multiplier for ozone absorption (affects sunset colors)
+            mie_angstrom_beta: Aerosol optical thickness (higher = denser haze)
         """
         params = cls()
         
@@ -223,9 +227,19 @@ class AtmosphereParameters:
         # Ground albedo
         params.ground_albedo = np.array([ground_albedo] * 3)
         
-        # Ozone
-        if not use_ozone:
+        # Ozone - scale absorption by ozone_density multiplier
+        if not use_ozone or ozone_density <= 0:
             params.absorption_extinction = np.zeros(3, dtype=np.float64)
+        else:
+            params.absorption_extinction = OZONE_ABSORPTION_COEFFICIENTS * ozone_density
+        
+        # Mie Angstrom Beta - scale Mie scattering/extinction by beta ratio
+        # Default beta is 0.04, so if user sets 0.08, double the Mie
+        # The formula is: mie_coefficient = (beta / 0.04) * base_coefficient
+        if mie_angstrom_beta > 0:
+            beta_scale = mie_angstrom_beta / 0.04
+            params.mie_scattering = params.mie_scattering * beta_scale
+            params.mie_extinction = params.mie_extinction * beta_scale
         
         return params
     
@@ -249,6 +263,8 @@ class AtmosphereParameters:
             mie_height=settings.mie_scale_height,
             ground_albedo=settings.ground_albedo,
             use_ozone=settings.use_ozone,
+            ozone_density=getattr(settings, 'ozone_density', 1.0),
+            mie_angstrom_beta=getattr(settings, 'mie_angstrom_beta', 0.04),
         )
 
 

@@ -130,12 +130,22 @@ class HELIOS_PT_atmosphere_panel(Panel):
         col.prop(settings, "mie_density", text="Density")
         col.prop(settings, "mie_scale_height", text="Scale Height")
         col.prop(settings, "mie_phase_g", text="Phase G")
+        col.prop(settings, "mie_angstrom_beta", text="Angstrom Beta")
+        
+        layout.separator()
+        
+        # Ozone (sunset colors)
+        box = layout.box()
+        box.label(text="Ozone Layer (Sunset Colors)", icon='LIGHT_HEMI')
+        col = box.column(align=True)
+        col.prop(settings, "use_ozone", text="Enable Ozone")
+        if settings.use_ozone:
+            col.prop(settings, "ozone_density", text="Density")
         
         layout.separator()
         
         # Ground
         layout.prop(settings, "ground_albedo")
-        layout.prop(settings, "use_ozone")
         
         # Info box
         if settings.mie_phase_g > 0.9:
