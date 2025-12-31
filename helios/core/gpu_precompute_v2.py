@@ -983,13 +983,20 @@ class GPUPrecomputeV2:
         if progress_callback:
             progress_callback(0.5, "Computing direct irradiance (GPU v2)...")
         
-        # Step 3: Direct Irradiance
-        irradiance = self.precompute_direct_irradiance(transmittance)
+        # Step 3: Direct Irradiance (stored separately for scattering density)
+        # IMPORTANT: Reference stores ONLY indirect irradiance in irradiance texture
+        # Direct irradiance is used for scattering density computation but NOT in final texture
+        delta_irradiance_direct = self.precompute_direct_irradiance(transmittance)
         
         if progress_callback:
             progress_callback(0.6, "Direct irradiance complete")
         
-        # TODO: Add multiple scattering after direct irradiance verified
+        # Irradiance texture starts at ZERO - only indirect irradiance is stored
+        # This matches reference behavior where irradiance.exr = indirect only
+        irradiance = np.zeros((IRRADIANCE_TEXTURE_HEIGHT, IRRADIANCE_TEXTURE_WIDTH, 3), 
+                              dtype=np.float32)
+        
+        # TODO: Add multiple scattering which computes indirect irradiance and adds to texture
         
         if progress_callback:
             progress_callback(1.0, "GPU v2 precomputation complete")

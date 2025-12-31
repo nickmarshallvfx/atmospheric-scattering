@@ -11,7 +11,7 @@ define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
             <split size="1257" stretch="1"/>
             <splitter orientation="2">
                 <split size="638"/>
-                <dock id="" activePageId="Viewer.1">
+                <dock id="" activePageId="Viewer.1" focus="true">
                     <page id="Viewer.1"/>
                 </dock>
                 <split size="449"/>
@@ -94,7 +94,7 @@ Read {
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/irradiance.exr
  format "64 16 0 0 64 16 1 "
  origset true
- version 67
+ version 68
  name Read5
  xpos 918
  ypos 81
@@ -166,8 +166,9 @@ Read {
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/scattering.exr
  format "8192 128 0 0 8192 128 1 "
  origset true
- version 35
+ version 36
  name Read6
+ selected true
  xpos 510
  ypos 45
 }
@@ -256,7 +257,6 @@ Viewer {
    }
  monitorOutOutputTransform rec709
  name Viewer1
- selected true
  xpos -40
  ypos -9
 }
