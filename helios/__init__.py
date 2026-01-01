@@ -96,6 +96,10 @@ def _update_preview_invalidate(self, context):
     current_hash = _get_lut_param_hash(settings)
     scene_key = scene.name  # Use name, not id() which can change
     
+    print(f"Helios: DEBUG scene_key={scene_key}")
+    print(f"Helios: DEBUG current_hash={current_hash}")
+    print(f"Helios: DEBUG cached_hash={_last_lut_params.get(scene_key, 'NOT CACHED')}")
+    
     if scene_key in _last_lut_params and _last_lut_params[scene_key] == current_hash:
         # Values haven't changed, skip rebake
         print(f"Helios: Values unchanged, skipping rebake")
