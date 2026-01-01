@@ -96,22 +96,28 @@ def setup_aerial_aovs(context):
     scene = context.scene
     view_layer = context.view_layer
     
-    # Get or create AOVs
+    # Get or create AOVs - match test script pattern exactly
     aovs = view_layer.aovs
     
-    # Transmittance AOV
-    if AERIAL_AOV_TRANSMITTANCE not in aovs:
-        aov = aovs.add()
-        aov.name = AERIAL_AOV_TRANSMITTANCE
-        aov.type = 'COLOR'
-        print(f"Helios: Created AOV '{AERIAL_AOV_TRANSMITTANCE}'")
-    
-    # Inscatter AOV
-    if AERIAL_AOV_INSCATTER not in aovs:
-        aov = aovs.add()
-        aov.name = AERIAL_AOV_INSCATTER
-        aov.type = 'COLOR'
-        print(f"Helios: Created AOV '{AERIAL_AOV_INSCATTER}'")
+    for aov_name in [AERIAL_AOV_TRANSMITTANCE, AERIAL_AOV_INSCATTER]:
+        # Check if exists by iterating (like test script does)
+        exists = False
+        for existing_aov in aovs:
+            if existing_aov.name == aov_name:
+                exists = True
+                print(f"Helios: AOV '{aov_name}' already exists")
+                break
+        
+        if not exists:
+            # Remove any old version first (like test script)
+            for existing_aov in list(aovs):
+                if existing_aov.name == aov_name:
+                    aovs.remove(existing_aov)
+            
+            aov = aovs.add()
+            aov.name = aov_name
+            aov.type = 'COLOR'
+            print(f"Helios: Created AOV '{aov_name}'")
     
     return True
 
@@ -320,41 +326,32 @@ def _connect_to_material_output(nodes, links, osl_node):
 
 
 def _create_aov_outputs(nodes, links, osl_node):
-    """Create AOV output nodes for transmittance and inscatter."""
+    """Create AOV output nodes for transmittance and inscatter.
     
+    Matches the pattern from test_aov_blender5.py which works.
+    """
     print(f"Helios: Creating AOV outputs...")
-    print(f"Helios: OSL output sockets: {[(o.name, o.type) for o in osl_node.outputs]}")
     
-    # MINIMAL TEST: Use Geometry node position (known to work in Blender)
-    # This tests if AOV Output nodes work at all, independent of OSL
+    # Create Geometry node for test (matches working test script)
     geom_node = nodes.new('ShaderNodeNewGeometry')
-    geom_node.name = "Helios_Test_Geom"
+    geom_node.name = "Helios_Geom"
     geom_node.location = (osl_node.location.x + 100, osl_node.location.y + 100)
     
-    # Transmittance AOV output - TEST: Use geometry position (should show world coords as color)
+    # Transmittance AOV - use geometry position for now (works in test)
     aov_trans = nodes.new('ShaderNodeOutputAOV')
     aov_trans.name = "Helios_AOV_Transmittance"
-    aov_trans.label = "Transmittance AOV"
     aov_trans.location = (osl_node.location.x + 300, osl_node.location.y)
     aov_trans.aov_name = AERIAL_AOV_TRANSMITTANCE
-    
-    # Debug: Check what inputs the AOV node has
-    print(f"Helios: AOV node inputs: {[(i.name, i.type) for i in aov_trans.inputs]}")
-    print(f"Helios: AOV node aov_name = '{aov_trans.aov_name}'")
-    
-    # Connect geometry position to AOV - this should show XYZ as RGB
     links.new(geom_node.outputs['Position'], aov_trans.inputs['Color'])
-    print(f"Helios: Connected Geometry.Position -> {AERIAL_AOV_TRANSMITTANCE}")
+    print(f"Helios: AOV '{AERIAL_AOV_TRANSMITTANCE}' -> Geometry.Position")
     
-    # Inscatter AOV output - use geometry normal for another test
+    # Inscatter AOV - use geometry normal for now
     aov_inscatter = nodes.new('ShaderNodeOutputAOV')
     aov_inscatter.name = "Helios_AOV_Inscatter"
-    aov_inscatter.label = "Inscatter AOV"
     aov_inscatter.location = (osl_node.location.x + 300, osl_node.location.y - 100)
     aov_inscatter.aov_name = AERIAL_AOV_INSCATTER
-    
     links.new(geom_node.outputs['Normal'], aov_inscatter.inputs['Color'])
-    print(f"Helios: Connected Geometry.Normal -> {AERIAL_AOV_INSCATTER}")
+    print(f"Helios: AOV '{AERIAL_AOV_INSCATTER}' -> Geometry.Normal")
 
 
 def remove_aerial_from_material(material):
@@ -399,6 +396,7 @@ def remove_aerial_from_material(material):
         "Helios_Aerial_Mix",
         "Helios_Test_RGB",
         "Helios_Test_Geom",
+        "Helios_Geom",
     ]
     
     for node_name in nodes_to_remove:
