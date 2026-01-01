@@ -173,6 +173,10 @@ def add_aerial_to_material(material, context):
     # Create AOV output nodes
     _create_aov_outputs(nodes, links, osl_node)
     
+    # IMPORTANT: OSL nodes are only evaluated if connected to the material output chain.
+    # Connect via a transparent mix to ensure evaluation without affecting appearance.
+    _connect_to_material_output(nodes, links, osl_node)
+    
     print(f"Helios: Added aerial perspective to material '{material.name}'")
     return True
 
@@ -247,6 +251,70 @@ def _update_aerial_node(osl_node, context, settings):
     print(f"Helios: Sun direction: {sun_dir}")
 
 
+def _connect_to_material_output(nodes, links, osl_node):
+    """
+    Connect OSL node to material output chain to ensure it gets evaluated.
+    
+    OSL nodes in Cycles are only evaluated if their outputs contribute to the
+    final shader. We connect via an Add Shader with the aerial output going to
+    an emission shader with 0 strength, which ensures evaluation without
+    affecting the material appearance.
+    """
+    # Find Material Output node
+    output_node = None
+    for node in nodes:
+        if node.type == 'OUTPUT_MATERIAL' and node.is_active_output:
+            output_node = node
+            break
+    
+    if output_node is None:
+        print("Helios: No active Material Output node found")
+        return
+    
+    # Get what's currently connected to the output
+    surface_input = output_node.inputs.get('Surface')
+    if surface_input is None:
+        print("Helios: Material Output has no Surface input")
+        return
+    
+    original_link = None
+    original_socket = None
+    for link in surface_input.links:
+        original_link = link
+        original_socket = link.from_socket
+        break
+    
+    if original_socket is None:
+        print("Helios: Nothing connected to Material Output - skipping aerial integration")
+        return
+    
+    # Create an Emission shader for the aerial perspective (will be mixed at 0)
+    emission = nodes.new('ShaderNodeEmission')
+    emission.name = "Helios_Aerial_Emission"
+    emission.location = (osl_node.location.x + 200, osl_node.location.y - 200)
+    emission.inputs['Strength'].default_value = 0.0  # Zero strength = no contribution
+    
+    # Connect aerial transmittance to emission color (just to force evaluation)
+    if 'AerialTransmittance' in osl_node.outputs:
+        links.new(osl_node.outputs['AerialTransmittance'], emission.inputs['Color'])
+    
+    # Create Add Shader to combine original material with zero-strength emission
+    add_shader = nodes.new('ShaderNodeAddShader')
+    add_shader.name = "Helios_Aerial_Add"
+    add_shader.location = (output_node.location.x - 200, output_node.location.y)
+    
+    # Connect: original -> Add Shader input 1
+    links.new(original_socket, add_shader.inputs[0])
+    
+    # Connect: emission (0 strength) -> Add Shader input 2
+    links.new(emission.outputs['Emission'], add_shader.inputs[1])
+    
+    # Connect: Add Shader -> Material Output
+    links.new(add_shader.outputs['Shader'], surface_input)
+    
+    print("Helios: Connected aerial perspective to material output chain")
+
+
 def _create_aov_outputs(nodes, links, osl_node):
     """Create AOV output nodes for transmittance and inscatter."""
     
@@ -275,13 +343,40 @@ def remove_aerial_from_material(material):
         return False
     
     nodes = material.node_tree.nodes
+    links = material.node_tree.links
     
-    # Remove aerial OSL node
-    if AERIAL_OSL_NODE_NAME in nodes:
-        nodes.remove(nodes[AERIAL_OSL_NODE_NAME])
+    # First, restore original connection if we added the Add Shader
+    add_shader = nodes.get("Helios_Aerial_Add")
+    if add_shader:
+        # Find what was connected to the Add Shader's first input (original material)
+        original_socket = None
+        for link in add_shader.inputs[0].links:
+            original_socket = link.from_socket
+            break
+        
+        # Find the Material Output
+        output_node = None
+        for node in nodes:
+            if node.type == 'OUTPUT_MATERIAL' and node.is_active_output:
+                output_node = node
+                break
+        
+        # Restore original connection
+        if original_socket and output_node:
+            surface_input = output_node.inputs.get('Surface')
+            if surface_input:
+                links.new(original_socket, surface_input)
     
-    # Remove AOV output nodes
-    for node_name in ["Helios_AOV_Transmittance", "Helios_AOV_Inscatter"]:
+    # Remove all Helios aerial nodes
+    nodes_to_remove = [
+        AERIAL_OSL_NODE_NAME,
+        "Helios_AOV_Transmittance",
+        "Helios_AOV_Inscatter",
+        "Helios_Aerial_Emission",
+        "Helios_Aerial_Add",
+    ]
+    
+    for node_name in nodes_to_remove:
         if node_name in nodes:
             nodes.remove(nodes[node_name])
     
