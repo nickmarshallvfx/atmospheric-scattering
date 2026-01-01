@@ -47,6 +47,22 @@ def _update_preview(self, context):
 # Debounce timer for LUT recomputation
 _debounce_timer = None
 
+# Cache of previous LUT-affecting parameter values to detect actual changes
+_last_lut_params = {}
+
+def _get_lut_param_hash(settings):
+    """Get a hashable tuple of all LUT-affecting parameters."""
+    return (
+        round(settings.rayleigh_density, 6),
+        round(settings.mie_density, 6),
+        round(settings.rayleigh_scale_height, 1),
+        round(settings.mie_scale_height, 1),
+        round(settings.ground_albedo, 4),
+        settings.use_ozone,
+        round(getattr(settings, 'ozone_density', 1.0), 4),
+        round(getattr(settings, 'mie_angstrom_beta', 0.04), 6),
+    )
+
 def _do_recompute_luts(context):
     """Actually perform the LUT recomputation (called after debounce delay).
     
@@ -70,11 +86,22 @@ def _do_recompute_luts(context):
 # Update callback that triggers LUT recomputation
 def _update_preview_invalidate(self, context):
     """Update preview and trigger LUT recomputation for parameters baked into LUTs."""
-    global _debounce_timer
+    global _debounce_timer, _last_lut_params
     import bpy
     
     scene = context.scene
     settings = scene.helios
+    
+    # Check if values actually changed
+    current_hash = _get_lut_param_hash(settings)
+    scene_id = id(scene)
+    
+    if scene_id in _last_lut_params and _last_lut_params[scene_id] == current_hash:
+        # Values haven't changed, skip rebake
+        return
+    
+    # Update cached values
+    _last_lut_params[scene_id] = current_hash
     
     # Mark LUTs as invalid
     settings.luts_valid = False
