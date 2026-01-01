@@ -44,6 +44,7 @@ SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE
 # =============================================================================
 
 SKY_NODE_GROUP_NAME = "Helios_Sky"
+SKY_NODE_VERSION = 2  # Increment this to verify code changes are picked up
 
 
 # =============================================================================
@@ -648,7 +649,7 @@ def create_sky_node_group(lut_dir=None):
     # Inscatter = radiance (without exposure, for compositing)
     builder.link(radiance_scaled.outputs[0], group_output.inputs['Inscatter'])
     
-    print(f"Helios: Created sky node group '{SKY_NODE_GROUP_NAME}'")
+    print(f"Helios: Created sky node group '{SKY_NODE_GROUP_NAME}' (VERSION {SKY_NODE_VERSION})")
     return group
 
 
