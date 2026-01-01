@@ -285,3 +285,55 @@ class HELIOS_OT_preset_titan(bpy.types.Operator):
         settings.use_ozone = False
         settings.luts_valid = False
         return {'FINISHED'}
+
+
+class HELIOS_PT_aerial_panel(Panel):
+    """Aerial Perspective settings panel"""
+    bl_label = "Aerial Perspective"
+    bl_idname = "HELIOS_PT_aerial_panel"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "world"
+    bl_parent_id = "HELIOS_PT_main_panel"
+    
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        
+        # Info box
+        box = layout.box()
+        box.label(text="Atmospheric haze for scene objects", icon='OUTLINER_OB_VOLUME')
+        box.label(text="Outputs AOVs: transmittance, inscatter")
+        
+        layout.separator()
+        
+        # Add to materials buttons
+        col = layout.column(align=True)
+        col.label(text="Add to Materials:")
+        row = col.row(align=True)
+        row.operator("helios.add_aerial_to_selected", text="Selected", icon='RESTRICT_SELECT_OFF')
+        row.operator("helios.add_aerial_to_all", text="All", icon='WORLD')
+        
+        layout.separator()
+        
+        # Remove from materials buttons
+        col = layout.column(align=True)
+        col.label(text="Remove from Materials:")
+        row = col.row(align=True)
+        row.operator("helios.remove_aerial_from_selected", text="Selected", icon='X')
+        row.operator("helios.remove_aerial_from_all", text="All", icon='TRASH')
+        
+        layout.separator()
+        
+        # Update button
+        col = layout.column(align=True)
+        col.operator("helios.update_aerial", text="Update All Nodes", icon='FILE_REFRESH')
+        
+        layout.separator()
+        
+        # Nuke workflow info
+        box = layout.box()
+        box.label(text="Nuke Compositing:", icon='INFO')
+        box.label(text="Beauty × Transmittance + Inscatter")
+        box.label(text="Then merge over Sky AOV")
