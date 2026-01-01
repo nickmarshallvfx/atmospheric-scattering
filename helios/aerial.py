@@ -96,28 +96,21 @@ def setup_aerial_aovs(context):
     scene = context.scene
     view_layer = context.view_layer
     
-    # Get or create AOVs - match test script pattern exactly
+    # Force recreate AOVs to ensure correct setup (matches test script)
     aovs = view_layer.aovs
     
     for aov_name in [AERIAL_AOV_TRANSMITTANCE, AERIAL_AOV_INSCATTER]:
-        # Check if exists by iterating (like test script does)
-        exists = False
-        for existing_aov in aovs:
+        # Remove existing AOV if present (force clean slate)
+        for existing_aov in list(aovs):
             if existing_aov.name == aov_name:
-                exists = True
-                print(f"Helios: AOV '{aov_name}' already exists")
-                break
+                aovs.remove(existing_aov)
+                print(f"Helios: Removed old AOV '{aov_name}'")
         
-        if not exists:
-            # Remove any old version first (like test script)
-            for existing_aov in list(aovs):
-                if existing_aov.name == aov_name:
-                    aovs.remove(existing_aov)
-            
-            aov = aovs.add()
-            aov.name = aov_name
-            aov.type = 'COLOR'
-            print(f"Helios: Created AOV '{aov_name}'")
+        # Create fresh AOV
+        aov = aovs.add()
+        aov.name = aov_name
+        aov.type = 'COLOR'
+        print(f"Helios: Created AOV '{aov_name}' (type={aov.type})")
     
     return True
 
