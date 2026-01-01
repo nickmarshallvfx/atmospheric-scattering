@@ -178,6 +178,10 @@ def add_aerial_to_material(material, context):
     # Connect OSL to material output chain (for visual debug)
     _connect_to_material_output(nodes, links, osl_node)
     
+    # CRITICAL: Force shader recompile so AOV nodes are evaluated
+    material.node_tree.update_tag()
+    material.update_tag()
+    
     print(f"Helios: Added aerial perspective to material '{material.name}'")
     return True
 

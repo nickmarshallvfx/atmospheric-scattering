@@ -47,6 +47,9 @@ class HELIOS_OT_add_aerial_to_selected(Operator):
                         if aerial.add_aerial_to_material(slot.material, context):
                             count += 1
         
+        # Force full scene update so shaders recompile with AOV nodes
+        context.view_layer.update()
+        
         if count > 0:
             self.report({'INFO'}, f"Added aerial perspective to {count} material(s)")
             return {'FINISHED'}
@@ -69,6 +72,9 @@ class HELIOS_OT_add_aerial_to_all(Operator):
         aerial.setup_aerial_aovs(context)
         
         count = aerial.add_aerial_to_all_materials(context)
+        
+        # Force full scene update so shaders recompile with AOV nodes
+        context.view_layer.update()
         
         if count > 0:
             self.report({'INFO'}, f"Added aerial perspective to {count} material(s)")
