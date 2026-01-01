@@ -94,14 +94,16 @@ def _update_preview_invalidate(self, context):
     
     # Check if values actually changed
     current_hash = _get_lut_param_hash(settings)
-    scene_id = id(scene)
+    scene_key = scene.name  # Use name, not id() which can change
     
-    if scene_id in _last_lut_params and _last_lut_params[scene_id] == current_hash:
+    if scene_key in _last_lut_params and _last_lut_params[scene_key] == current_hash:
         # Values haven't changed, skip rebake
+        print(f"Helios: Values unchanged, skipping rebake")
         return
     
+    print(f"Helios: Values changed, scheduling rebake")
     # Update cached values
-    _last_lut_params[scene_id] = current_hash
+    _last_lut_params[scene_key] = current_hash
     
     # Mark LUTs as invalid
     settings.luts_valid = False
