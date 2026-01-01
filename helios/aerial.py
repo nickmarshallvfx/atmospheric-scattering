@@ -325,13 +325,13 @@ def _create_aov_outputs(nodes, links, osl_node):
     print(f"Helios: Creating AOV outputs...")
     print(f"Helios: OSL output sockets: {[(o.name, o.type) for o in osl_node.outputs]}")
     
-    # TEST: Create a simple RGB node with fixed color to test if AOV Output works at all
-    test_rgb = nodes.new('ShaderNodeRGB')
-    test_rgb.name = "Helios_Test_RGB"
-    test_rgb.location = (osl_node.location.x + 150, osl_node.location.y + 100)
-    test_rgb.outputs['Color'].default_value = (1.0, 0.0, 1.0, 1.0)  # Magenta test color
+    # MINIMAL TEST: Use Geometry node position (known to work in Blender)
+    # This tests if AOV Output nodes work at all, independent of OSL
+    geom_node = nodes.new('ShaderNodeNewGeometry')
+    geom_node.name = "Helios_Test_Geom"
+    geom_node.location = (osl_node.location.x + 100, osl_node.location.y + 100)
     
-    # Transmittance AOV output - TEST: Use RGB node instead of OSL
+    # Transmittance AOV output - TEST: Use geometry position (should show world coords as color)
     aov_trans = nodes.new('ShaderNodeOutputAOV')
     aov_trans.name = "Helios_AOV_Transmittance"
     aov_trans.label = "Transmittance AOV"
@@ -340,22 +340,21 @@ def _create_aov_outputs(nodes, links, osl_node):
     
     # Debug: Check what inputs the AOV node has
     print(f"Helios: AOV node inputs: {[(i.name, i.type) for i in aov_trans.inputs]}")
+    print(f"Helios: AOV node aov_name = '{aov_trans.aov_name}'")
     
-    # TEST: Connect RGB node instead of OSL output
-    links.new(test_rgb.outputs['Color'], aov_trans.inputs['Color'])
-    print(f"Helios: Connected TEST RGB (magenta) -> {AERIAL_AOV_TRANSMITTANCE}")
+    # Connect geometry position to AOV - this should show XYZ as RGB
+    links.new(geom_node.outputs['Position'], aov_trans.inputs['Color'])
+    print(f"Helios: Connected Geometry.Position -> {AERIAL_AOV_TRANSMITTANCE}")
     
-    # Inscatter AOV output - keep using OSL for comparison
-    if 'AerialInscatter' in osl_node.outputs:
-        aov_inscatter = nodes.new('ShaderNodeOutputAOV')
-        aov_inscatter.name = "Helios_AOV_Inscatter"
-        aov_inscatter.label = "Inscatter AOV"
-        aov_inscatter.location = (osl_node.location.x + 300, osl_node.location.y - 100)
-        aov_inscatter.aov_name = AERIAL_AOV_INSCATTER
-        links.new(osl_node.outputs['AerialInscatter'], aov_inscatter.inputs['Color'])
-        print(f"Helios: Connected AerialInscatter -> {AERIAL_AOV_INSCATTER}")
-    else:
-        print(f"Helios: WARNING - AerialInscatter output not found!")
+    # Inscatter AOV output - use geometry normal for another test
+    aov_inscatter = nodes.new('ShaderNodeOutputAOV')
+    aov_inscatter.name = "Helios_AOV_Inscatter"
+    aov_inscatter.label = "Inscatter AOV"
+    aov_inscatter.location = (osl_node.location.x + 300, osl_node.location.y - 100)
+    aov_inscatter.aov_name = AERIAL_AOV_INSCATTER
+    
+    links.new(geom_node.outputs['Normal'], aov_inscatter.inputs['Color'])
+    print(f"Helios: Connected Geometry.Normal -> {AERIAL_AOV_INSCATTER}")
 
 
 def remove_aerial_from_material(material):
@@ -399,6 +398,7 @@ def remove_aerial_from_material(material):
         "Helios_Aerial_Add",
         "Helios_Aerial_Mix",
         "Helios_Test_RGB",
+        "Helios_Test_Geom",
     ]
     
     for node_name in nodes_to_remove:
