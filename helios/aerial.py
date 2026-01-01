@@ -33,16 +33,8 @@ def get_aerial_shader_path():
     return os.path.join(shader_dir, "aerial_perspective.osl")
 
 
-def get_lut_cache_dir():
-    """Get the directory where precomputed LUTs are stored."""
-    blend_path = bpy.data.filepath
-    if blend_path:
-        cache_dir = os.path.join(os.path.dirname(blend_path), "helios_cache", "luts")
-        if os.path.exists(cache_dir):
-            return cache_dir
-    
-    config_dir = bpy.utils.user_resource('CONFIG')
-    return os.path.join(config_dir, "helios_cache", "luts")
+# Import from utils to avoid duplication
+from .utils import get_lut_cache_dir
 
 
 def get_camera_position_km(context, settings):
