@@ -91,26 +91,6 @@ Read {
 Read {
  inputs 0
  file_type exr
- file C:/Users/space/OneDrive/Desktop/nodeBasedDefaults.exr
- format "960 540 0 0 960 540 1 "
- origset true
- name Read9
- xpos 840
- ypos -81
-}
-add_layer {ViewLayer_Helios_Sky ViewLayer_Helios_Sky.red ViewLayer_Helios_Sky.green ViewLayer_Helios_Sky.blue ViewLayer_Helios_Sky.alpha}
-Shuffle2 {
- fromInput1 {{0} B}
- in1 ViewLayer_Helios_Sky
- fromInput2 {{0} B}
- mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
- name Shuffle5
- xpos 840
- ypos 39
-}
-Read {
- inputs 0
- file_type exr
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/irradiance.exr
  format "64 16 0 0 64 16 1 "
  origset true
@@ -177,26 +157,6 @@ Merge2 {
  name Merge2
  xpos 840
  ypos 327
-}
-Read {
- inputs 0
- file_type exr
- file C:/Users/space/OneDrive/Desktop/OSLDefaults.exr
- format "960 540 0 0 960 540 1 "
- origset true
- name Read10
- xpos 1060
- ypos -80
-}
-add_layer {ViewLayer_Environment ViewLayer_Environment.red ViewLayer_Environment.green ViewLayer_Environment.blue}
-Shuffle2 {
- fromInput1 {{0} B}
- in1 ViewLayer_Environment
- fromInput2 {{0} B}
- mappings "4 ViewLayer_Environment.red 0 0 rgba.red 0 0 ViewLayer_Environment.green 0 1 rgba.green 0 1 ViewLayer_Environment.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
- name Shuffle6
- xpos 1060
- ypos 39
 }
 Read {
  inputs 0
@@ -285,6 +245,66 @@ Merge2 {
  xpos 400
  ypos 303
 }
+Read {
+ inputs 0
+ file_type exr
+ file C:/Users/space/OneDrive/Desktop/nodeBasedDefaults.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ version 1
+ name Read9
+ xpos 840
+ ypos -81
+}
+add_layer {ViewLayer_Helios_Sky ViewLayer_Helios_Sky.red ViewLayer_Helios_Sky.green ViewLayer_Helios_Sky.blue ViewLayer_Helios_Sky.alpha}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Helios_Sky
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle5
+ xpos 840
+ ypos 39
+}
+Read {
+ inputs 0
+ file_type exr
+ file C:/Users/space/OneDrive/Desktop/OSLDefaults.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ name Read10
+ xpos 1060
+ ypos -80
+}
+add_layer {ViewLayer_Environment ViewLayer_Environment.red ViewLayer_Environment.green ViewLayer_Environment.blue}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Environment
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Environment.red 0 0 rgba.red 0 0 ViewLayer_Environment.green 0 1 rgba.green 0 1 ViewLayer_Environment.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle6
+ xpos 1060
+ ypos 39
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/OneDrive/Desktop/nodeBased_8degElev.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ name Read11
+ xpos 950
+ ypos -87
+}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Helios_Sky
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle7
+ xpos 950
+ ypos 39
+}
 Viewer {
  inputs 2
  frame 10
@@ -294,6 +314,7 @@ Viewer {
    }
  monitorOutOutputTransform rec709
  name Viewer1
+ selected true
  xpos -40
  ypos -9
 }

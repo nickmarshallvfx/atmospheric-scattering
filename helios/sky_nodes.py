@@ -44,7 +44,7 @@ SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE
 # =============================================================================
 
 SKY_NODE_GROUP_NAME = "Helios_Sky"
-SKY_NODE_VERSION = 3  # Increment this to verify code changes are picked up
+SKY_NODE_VERSION = 4  # Increment this to verify code changes are picked up
 
 
 # =============================================================================
@@ -729,16 +729,57 @@ def create_sky_node_group(lut_dir=None):
     builder.link(denom_pow.outputs[0], mie_phase.inputs[1])
     
     # =========================================================================
-    # APPLY PHASE FUNCTION TO SCATTERING
+    # EXTRACT MIE SCATTERING FROM COMBINED TEXTURE
+    # =========================================================================
+    # Combined texture: RGB = Rayleigh + multiple scattering
+    # For Mie, use extrapolation formula from Bruneton:
+    # single_mie = scattering * (rayleigh[0]/mie[0]) * (mie/rayleigh)
+    # With default coefficients: rayleigh = (0.0058, 0.0135, 0.0331), mie = (0.004, 0.004, 0.004)
+    # Ratio = rayleigh[0]/mie[0] = 0.0058/0.004 = 1.45
+    # mie/rayleigh = (0.004/0.0058, 0.004/0.0135, 0.004/0.0331) = (0.69, 0.296, 0.121)
+    # So the Mie color shift factor is approximately (1.0, 0.43, 0.176)
+    
+    # Separate scattering RGB to apply color shift for Mie
+    sep_scat = builder.separate_color(2500, -600, 'Sep_Scattering')
+    builder.link(scat_interp.outputs[2], sep_scat.inputs['Color'])
+    
+    # Mie color shift factors (derived from rayleigh/mie coefficient ratios)
+    mie_r = builder.math('MULTIPLY', 2700, -550, 'Mie_R', v1=1.0)
+    builder.link(sep_scat.outputs['Red'], mie_r.inputs[0])
+    
+    mie_g = builder.math('MULTIPLY', 2700, -600, 'Mie_G', v1=0.43)
+    builder.link(sep_scat.outputs['Green'], mie_g.inputs[0])
+    
+    mie_b = builder.math('MULTIPLY', 2700, -650, 'Mie_B', v1=0.176)
+    builder.link(sep_scat.outputs['Blue'], mie_b.inputs[0])
+    
+    # Combine Mie scattering
+    mie_scattering = builder.combine_color(2900, -600, 'Mie_Scattering')
+    builder.link(mie_r.outputs[0], mie_scattering.inputs['Red'])
+    builder.link(mie_g.outputs[0], mie_scattering.inputs['Green'])
+    builder.link(mie_b.outputs[0], mie_scattering.inputs['Blue'])
+    
+    # =========================================================================
+    # APPLY PHASE FUNCTIONS TO SCATTERING COMPONENTS
     # =========================================================================
     
-    # For combined texture, apply Rayleigh phase (primary component)
-    radiance = builder.vec_math('SCALE', 2800, -500, 'Radiance')
-    builder.link(scat_interp.outputs[2], radiance.inputs[0])  # Result
-    builder.link(rayleigh_phase.outputs[0], radiance.inputs['Scale'])
+    # Rayleigh component: scattering * Rayleigh_phase
+    rayleigh_contrib = builder.vec_math('SCALE', 3100, -450, 'Rayleigh_Contrib')
+    builder.link(scat_interp.outputs[2], rayleigh_contrib.inputs[0])
+    builder.link(rayleigh_phase.outputs[0], rayleigh_contrib.inputs['Scale'])
+    
+    # Mie component: mie_scattering * Mie_phase
+    mie_contrib = builder.vec_math('SCALE', 3100, -550, 'Mie_Contrib')
+    builder.link(mie_scattering.outputs['Color'], mie_contrib.inputs[0])
+    builder.link(mie_phase.outputs[0], mie_contrib.inputs['Scale'])
+    
+    # Total radiance = Rayleigh + Mie
+    radiance = builder.vec_math('ADD', 3300, -500, 'Radiance')
+    builder.link(rayleigh_contrib.outputs[0], radiance.inputs[0])
+    builder.link(mie_contrib.outputs[0], radiance.inputs[1])
     
     # Apply sun intensity
-    radiance_scaled = builder.vec_math('SCALE', 3000, -500, 'Radiance_Scaled')
+    radiance_scaled = builder.vec_math('SCALE', 3500, -500, 'Radiance_Scaled')
     builder.link(radiance.outputs[0], radiance_scaled.inputs[0])
     builder.link(group_input.outputs['Sun_Intensity'], radiance_scaled.inputs['Scale'])
     
