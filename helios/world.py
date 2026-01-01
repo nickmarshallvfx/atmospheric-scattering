@@ -131,10 +131,16 @@ def get_or_create_helios_world(context):
     return world
 
 
+SKY_NODE_GROUP_INSTANCE = "Helios_Sky_Group"
+
+
 def create_atmosphere_world(context, use_preview=True):
     """
     Create or update the World shader for atmosphere rendering.
-    Uses OSL shader with precomputed Bruneton LUTs.
+    
+    Supports two modes based on settings.aerial_mode:
+    - NODE: Uses shader node group (supports AOV output, no OSL required)
+    - OSL: Uses OSL shader (reference implementation)
     
     Args:
         context: Blender context
@@ -143,16 +149,24 @@ def create_atmosphere_world(context, use_preview=True):
     scene = context.scene
     settings = scene.helios
     
-    # Ensure Cycles is set and OSL is enabled
+    # Ensure Cycles is set
     if scene.render.engine != 'CYCLES':
         scene.render.engine = 'CYCLES'
         print("Helios: Switched render engine to Cycles")
     
-    # Enable OSL - required for OSL shaders to work
-    if hasattr(scene, 'cycles') and hasattr(scene.cycles, 'shading_system'):
-        if not scene.cycles.shading_system:
-            scene.cycles.shading_system = True
-            print("Helios: Enabled Open Shading Language (OSL)")
+    # Handle OSL based on mode
+    if settings.aerial_mode == 'OSL':
+        # Enable OSL for OSL shader mode
+        if hasattr(scene, 'cycles') and hasattr(scene.cycles, 'shading_system'):
+            if not scene.cycles.shading_system:
+                scene.cycles.shading_system = True
+                print("Helios: Enabled Open Shading Language (OSL)")
+    else:
+        # Disable OSL for node-based mode (required for AOVs to work)
+        if hasattr(scene, 'cycles') and hasattr(scene.cycles, 'shading_system'):
+            if scene.cycles.shading_system:
+                scene.cycles.shading_system = False
+                print("Helios: Disabled OSL for node-based mode (AOVs require this)")
     
     world = get_or_create_helios_world(context)
     world.use_nodes = True
@@ -163,16 +177,25 @@ def create_atmosphere_world(context, use_preview=True):
     nodes = world.node_tree.nodes
     links = world.node_tree.links
     
-    # Check if we need to rebuild or just update
-    osl_node = nodes.get(OSL_NODE_NAME)
-    
-    if osl_node is None:
-        # Clear and rebuild
-        nodes.clear()
-        _build_sky_nodes(nodes, links, settings)
+    # Route to appropriate implementation based on mode
+    if settings.aerial_mode == 'NODE':
+        # Check if node-based sky exists
+        sky_group = nodes.get(SKY_NODE_GROUP_INSTANCE)
+        if sky_group is None:
+            # Clear and rebuild with node-based sky
+            nodes.clear()
+            _build_sky_nodes_node_based(nodes, links, settings, context)
+        else:
+            _update_sky_nodes_node_based(nodes, settings, context)
     else:
-        # Just update existing nodes
-        _update_sky_nodes(nodes, settings)
+        # Check if OSL sky exists
+        osl_node = nodes.get(OSL_NODE_NAME)
+        if osl_node is None:
+            # Clear and rebuild with OSL
+            nodes.clear()
+            _build_sky_nodes(nodes, links, settings)
+        else:
+            _update_sky_nodes(nodes, settings)
     
     # Force viewport update
     _force_viewport_update(context, world)
@@ -337,6 +360,118 @@ def _update_sky_nodes(nodes, settings):
     # Update background strength
     if background:
         background.inputs['Strength'].default_value = 1.0  # OSL handles exposure internally
+
+
+def _build_sky_nodes_node_based(nodes, links, settings, context):
+    """Build the sky node tree using node-based Bruneton shader (no OSL)."""
+    from . import sky_nodes
+    
+    lut_dir = get_lut_cache_dir()
+    print(f"Helios: Building node-based sky, LUT dir: {lut_dir}")
+    
+    # Get or create the sky node group
+    sky_group = sky_nodes.get_or_create_sky_node_group(lut_dir)
+    
+    # Add sky node group instance
+    group_node = nodes.new('ShaderNodeGroup')
+    group_node.name = SKY_NODE_GROUP_INSTANCE
+    group_node.label = "Helios Sky (Node)"
+    group_node.node_tree = sky_group
+    group_node.location = (-200, 0)
+    
+    # Geometry node for view direction
+    geom = nodes.new('ShaderNodeNewGeometry')
+    geom.name = "Helios_Geom"
+    geom.location = (-600, 0)
+    
+    # Negate incoming ray to get view direction (I points toward surface)
+    negate = nodes.new('ShaderNodeVectorMath')
+    negate.operation = 'SCALE'
+    negate.location = (-400, 0)
+    negate.inputs['Scale'].default_value = -1.0
+    links.new(geom.outputs['Incoming'], negate.inputs[0])
+    
+    # Normalize view direction
+    normalize = nodes.new('ShaderNodeVectorMath')
+    normalize.operation = 'NORMALIZE'
+    normalize.location = (-200, -100)
+    links.new(negate.outputs[0], normalize.inputs[0])
+    
+    # Connect view direction to sky group
+    links.new(normalize.outputs[0], group_node.inputs['View_Direction'])
+    
+    # Background node
+    background = nodes.new('ShaderNodeBackground')
+    background.name = BACKGROUND_NODE_NAME
+    background.location = (200, 0)
+    
+    # Output node
+    output = nodes.new('ShaderNodeOutputWorld')
+    output.location = (400, 0)
+    
+    # Connect sky to background
+    links.new(group_node.outputs['Sky'], background.inputs['Color'])
+    links.new(background.outputs['Background'], output.inputs['Surface'])
+    
+    # Create AOV outputs
+    aov_sky = nodes.new('ShaderNodeOutputAOV')
+    aov_sky.name = "Helios_AOV_Sky"
+    aov_sky.location = (200, -150)
+    aov_sky.aov_name = "Helios_Sky"
+    links.new(group_node.outputs['Sky'], aov_sky.inputs['Color'])
+    
+    aov_trans = nodes.new('ShaderNodeOutputAOV')
+    aov_trans.name = "Helios_AOV_Sky_Trans"
+    aov_trans.location = (200, -250)
+    aov_trans.aov_name = "Helios_Sky_Transmittance"
+    links.new(group_node.outputs['Transmittance'], aov_trans.inputs['Color'])
+    
+    aov_inscatter = nodes.new('ShaderNodeOutputAOV')
+    aov_inscatter.name = "Helios_AOV_Sky_Inscatter"
+    aov_inscatter.location = (200, -350)
+    aov_inscatter.aov_name = "Helios_Sky_Inscatter"
+    links.new(group_node.outputs['Inscatter'], aov_inscatter.inputs['Color'])
+    
+    # Apply initial settings
+    _update_sky_nodes_node_based(nodes, settings, context)
+    
+    print("Helios: Built node-based sky shader with AOVs")
+
+
+def _update_sky_nodes_node_based(nodes, settings, context):
+    """Update node-based sky parameters from Helios settings."""
+    
+    group_node = nodes.get(SKY_NODE_GROUP_INSTANCE)
+    if group_node is None:
+        return
+    
+    # Calculate sun direction
+    sun_dir = get_sun_direction(settings)
+    
+    # Camera position (500m above sea level by default)
+    camera = context.scene.camera
+    if camera:
+        cam_pos = camera.matrix_world.translation
+        # Convert to km, add Earth radius
+        cam_km = (0, 0, 6360.0 + cam_pos.z * 0.001)
+    else:
+        cam_km = (0, 0, 6360.5)  # Default 500m above sea level
+    
+    # Update node group inputs
+    if 'Sun_Direction' in group_node.inputs:
+        group_node.inputs['Sun_Direction'].default_value = (sun_dir.x, sun_dir.y, sun_dir.z)
+    
+    if 'Camera_Position' in group_node.inputs:
+        group_node.inputs['Camera_Position'].default_value = cam_km
+    
+    if 'Mie_Phase_G' in group_node.inputs:
+        group_node.inputs['Mie_Phase_G'].default_value = settings.mie_phase_g
+    
+    if 'Sun_Intensity' in group_node.inputs:
+        group_node.inputs['Sun_Intensity'].default_value = settings.sun_intensity
+    
+    if 'Exposure' in group_node.inputs:
+        group_node.inputs['Exposure'].default_value = settings.exposure
 
 
 def _force_viewport_update(context, world):
