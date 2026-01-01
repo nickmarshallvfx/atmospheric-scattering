@@ -369,8 +369,8 @@ def _build_sky_nodes_node_based(nodes, links, settings, context):
     lut_dir = get_lut_cache_dir()
     print(f"Helios: Building node-based sky, LUT dir: {lut_dir}")
     
-    # Get or create the sky node group
-    sky_group = sky_nodes.get_or_create_sky_node_group(lut_dir)
+    # Always recreate the sky node group (ensures code changes take effect)
+    sky_group = sky_nodes.create_sky_node_group(lut_dir)
     
     # Add sky node group instance
     group_node = nodes.new('ShaderNodeGroup')
