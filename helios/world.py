@@ -60,23 +60,45 @@ def get_sun_direction(settings) -> Vector:
 
 
 def setup_helios_aovs(context):
-    """Set up all Helios AOVs in the view layer."""
+    """Set up all Helios AOVs in the view layer.
+    
+    Based on working implementation from atmospheric-scattering-3.
+    """
     view_layer = context.view_layer
+    scene = context.scene
+    
+    # Enable Film Transparent - removes sky from beauty pass for clean compositing
+    scene.render.film_transparent = True
+    print("Helios: Enabled Film Transparent")
+    
+    # Enable Environment pass - provides world background for all pixels
+    view_layer.use_pass_environment = True
+    print("Helios: Enabled Environment pass")
+    
     aovs = view_layer.aovs
     
-    # Define all Helios AOVs
+    # Define all Helios AOVs - names must match exactly what AOV Output nodes use
     helios_aovs = [
-        "helios_sky",
-        "helios_transmittance", 
-        "helios_inscatter",
+        "Helios_Sky",
+        "Helios_Transmittance", 
+        "Helios_Inscatter",
     ]
     
     for aov_name in helios_aovs:
-        if aov_name not in aovs:
+        # Check if already exists
+        exists = False
+        for aov in aovs:
+            if aov.name == aov_name:
+                exists = True
+                break
+        
+        if not exists:
             aov = aovs.add()
             aov.name = aov_name
             aov.type = 'COLOR'
             print(f"Helios: Created AOV '{aov_name}'")
+        else:
+            print(f"Helios: AOV already exists: '{aov_name}'")
     
     return True
 
@@ -228,7 +250,7 @@ def _build_sky_nodes(nodes, links, settings):
         aov_sky.name = "Helios_AOV_Sky"
         aov_sky.label = "Sky AOV"
         aov_sky.location = (200, -150)
-        aov_sky.aov_name = "helios_sky"
+        aov_sky.aov_name = "Helios_Sky"
         links.new(osl_node.outputs['Sky'], aov_sky.inputs['Color'])
         print("Helios: Created Sky AOV output")
     

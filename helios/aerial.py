@@ -17,8 +17,9 @@ from mathutils import Vector
 
 # Constants
 AERIAL_OSL_NODE_NAME = "Helios_Aerial_OSL"
-AERIAL_AOV_TRANSMITTANCE = "helios_transmittance"
-AERIAL_AOV_INSCATTER = "helios_inscatter"
+# AOV names must match exactly what's registered in the view layer
+AERIAL_AOV_TRANSMITTANCE = "Helios_Transmittance"
+AERIAL_AOV_INSCATTER = "Helios_Inscatter"
 
 
 def get_aerial_shader_path():
