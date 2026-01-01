@@ -337,3 +337,52 @@ class HELIOS_PT_aerial_panel(Panel):
         box.label(text="Nuke Compositing:", icon='INFO')
         box.label(text="Beauty × Transmittance + Inscatter")
         box.label(text="Then merge over Sky AOV")
+
+
+class HELIOS_PT_render_passes_panel(Panel):
+    """Render Passes panel - workaround for OSL/AOV incompatibility"""
+    bl_label = "Render Passes"
+    bl_idname = "HELIOS_PT_render_passes_panel"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "world"
+    bl_parent_id = "HELIOS_PT_main_panel"
+    
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        
+        # OSL status
+        osl_enabled = scene.cycles.shading_system
+        
+        box = layout.box()
+        row = box.row()
+        if osl_enabled:
+            row.label(text="OSL: Enabled (sky correct, AOVs broken)", icon='ERROR')
+        else:
+            row.label(text="OSL: Disabled (AOVs work, sky approximate)", icon='CHECKMARK')
+        
+        row = box.row()
+        row.operator("helios.toggle_osl", text="Toggle OSL", icon='SETTINGS')
+        
+        layout.separator()
+        
+        # Explanation
+        box = layout.box()
+        box.label(text="Two-Pass Workflow:", icon='INFO')
+        box.label(text="Pass 1: Beauty with OSL (correct sky)")
+        box.label(text="Pass 2: AOVs without OSL")
+        
+        layout.separator()
+        
+        # Render buttons
+        col = layout.column(align=True)
+        col.scale_y = 1.3
+        col.operator("helios.render_beauty", text="Render Beauty (OSL)", icon='RENDER_STILL')
+        col.operator("helios.render_aovs", text="Render AOVs (No OSL)", icon='RENDER_RESULT')
+        
+        layout.separator()
+        
+        col = layout.column(align=True)
+        col.scale_y = 1.5
+        col.operator("helios.render_both_passes", text="Render Both Passes", icon='RENDER_ANIMATION')

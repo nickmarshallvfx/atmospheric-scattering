@@ -10,6 +10,7 @@ from .atmosphere_panel import (
     HELIOS_PT_rendering_panel,
     HELIOS_PT_planet_panel,
     HELIOS_PT_aerial_panel,
+    HELIOS_PT_render_passes_panel,
 )
 
 classes = (
@@ -19,6 +20,7 @@ classes = (
     HELIOS_PT_rendering_panel,
     HELIOS_PT_planet_panel,
     HELIOS_PT_aerial_panel,
+    HELIOS_PT_render_passes_panel,
 )
 
 
