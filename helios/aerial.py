@@ -324,21 +324,27 @@ def _create_aov_outputs(nodes, links, osl_node):
     print(f"Helios: Creating AOV outputs...")
     print(f"Helios: OSL output sockets: {[(o.name, o.type) for o in osl_node.outputs]}")
     
-    # Transmittance AOV output
-    if 'AerialTransmittance' in osl_node.outputs:
-        aov_trans = nodes.new('ShaderNodeOutputAOV')
-        aov_trans.name = "Helios_AOV_Transmittance"
-        aov_trans.label = "Transmittance AOV"
-        aov_trans.location = (osl_node.location.x + 300, osl_node.location.y)
-        aov_trans.aov_name = AERIAL_AOV_TRANSMITTANCE
-        
-        # Debug: Check what inputs the AOV node has
-        print(f"Helios: AOV node inputs: {[(i.name, i.type) for i in aov_trans.inputs]}")
-        
-        links.new(osl_node.outputs['AerialTransmittance'], aov_trans.inputs['Color'])
-        print(f"Helios: Connected AerialTransmittance -> {AERIAL_AOV_TRANSMITTANCE}")
+    # TEST: Create a simple RGB node with fixed color to test if AOV Output works at all
+    test_rgb = nodes.new('ShaderNodeRGB')
+    test_rgb.name = "Helios_Test_RGB"
+    test_rgb.location = (osl_node.location.x + 150, osl_node.location.y + 100)
+    test_rgb.outputs['Color'].default_value = (1.0, 0.0, 1.0, 1.0)  # Magenta test color
     
-    # Inscatter AOV output
+    # Transmittance AOV output - TEST: Use RGB node instead of OSL
+    aov_trans = nodes.new('ShaderNodeOutputAOV')
+    aov_trans.name = "Helios_AOV_Transmittance"
+    aov_trans.label = "Transmittance AOV"
+    aov_trans.location = (osl_node.location.x + 300, osl_node.location.y)
+    aov_trans.aov_name = AERIAL_AOV_TRANSMITTANCE
+    
+    # Debug: Check what inputs the AOV node has
+    print(f"Helios: AOV node inputs: {[(i.name, i.type) for i in aov_trans.inputs]}")
+    
+    # TEST: Connect RGB node instead of OSL output
+    links.new(test_rgb.outputs['Color'], aov_trans.inputs['Color'])
+    print(f"Helios: Connected TEST RGB (magenta) -> {AERIAL_AOV_TRANSMITTANCE}")
+    
+    # Inscatter AOV output - keep using OSL for comparison
     if 'AerialInscatter' in osl_node.outputs:
         aov_inscatter = nodes.new('ShaderNodeOutputAOV')
         aov_inscatter.name = "Helios_AOV_Inscatter"
@@ -391,6 +397,7 @@ def remove_aerial_from_material(material):
         "Helios_Aerial_Emission",
         "Helios_Aerial_Add",
         "Helios_Aerial_Mix",
+        "Helios_Test_RGB",
     ]
     
     for node_name in nodes_to_remove:
