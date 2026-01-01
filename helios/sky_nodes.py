@@ -421,51 +421,156 @@ def create_sky_node_group(lut_dir=None):
     builder.link(trans_uv.outputs[0], tex_transmittance.inputs['Vector'])
     
     # =========================================================================
-    # SCATTERING UV CALCULATION (simplified - single slice for now)
+    # SCATTERING UV CALCULATION (Bruneton non-linear mapping)
     # =========================================================================
     
-    # u_r for scattering
-    scat_u_r_raw = builder.math('DIVIDE', -400, -400, 'scat_u_r', v1=H)
-    builder.link(rho.outputs[0], scat_u_r_raw.inputs[0])
+    # u_r for scattering: rho / H with texture coord mapping
+    scat_x_r = builder.math('DIVIDE', -400, -400, 'scat_x_r', v1=H)
+    builder.link(rho.outputs[0], scat_x_r.inputs[0])
     
-    # u_mu for scattering (using same x_mu but scaled for scattering texture)
-    # For sky viewing (not intersecting ground), u_mu = 0.5 + 0.5 * x_mu_scaled
-    scat_mu_scale = 1.0 - 1.0 / (SCATTERING_TEXTURE_MU_SIZE / 2)
-    scat_mu_offset = 0.5 / (SCATTERING_TEXTURE_MU_SIZE / 2)
+    # Apply GetTextureCoordFromUnitRange: 0.5/size + x * (1 - 1/size)
+    r_tex_scale = 1.0 - 1.0 / SCATTERING_TEXTURE_R_SIZE
+    r_tex_offset = 0.5 / SCATTERING_TEXTURE_R_SIZE
     
-    x_mu_scat_scaled = builder.math('MULTIPLY', -200, -400, 'x_mu_scat', v1=scat_mu_scale)
-    builder.link(x_mu_final.outputs[0], x_mu_scat_scaled.inputs[0])
+    scat_u_r_scaled = builder.math('MULTIPLY', -200, -400, 'u_r_scaled', v1=r_tex_scale)
+    builder.link(scat_x_r.outputs[0], scat_u_r_scaled.inputs[0])
     
-    x_mu_scat_offset = builder.math('ADD', 0, -400, 'x_mu_scat_off', v1=scat_mu_offset)
-    builder.link(x_mu_scat_scaled.outputs[0], x_mu_scat_offset.inputs[0])
+    scat_u_r = builder.math('ADD', 0, -400, 'u_r', v1=r_tex_offset)
+    builder.link(scat_u_r_scaled.outputs[0], scat_u_r.inputs[0])
     
-    u_mu_scat = builder.math('MULTIPLY', 200, -400, 'u_mu_scat', v0=0.5)
-    builder.link(x_mu_scat_offset.outputs[0], u_mu_scat.inputs[1])
+    # u_mu for scattering - sky viewing case (not intersecting ground)
+    # d = -r*mu + sqrt(r²(mu²-1) + top_radius²)  (distance to top atmosphere)
+    # For sky: u_mu = 0.5 + 0.5 * GetTextureCoordFromUnitRange((d-d_min)/(d_max-d_min), MU_SIZE/2)
+    # where d_min = top_radius - r, d_max = rho + H
     
-    u_mu_scat_final = builder.math('ADD', 400, -400, 'u_mu_final', v0=0.5)
-    builder.link(u_mu_scat.outputs[0], u_mu_scat_final.inputs[1])
+    # d = -r*mu + sqrt(discriminant) - already computed as 'd' above for transmittance
+    # d_min = top_radius - r
+    scat_d_min = builder.math('SUBTRACT', -400, -450, 'scat_d_min', v0=TOP_RADIUS)
+    builder.link(r_final.outputs[0], scat_d_min.inputs[1])
     
-    # u_mu_s for scattering (simplified linear mapping)
-    mu_s_range = 1.0 - MU_S_MIN
-    mu_s_shifted = builder.math('SUBTRACT', -400, -500, 'mu_s_shift', v1=MU_S_MIN)
-    builder.link(mu_s_final.outputs[0], mu_s_shifted.inputs[0])
+    # d_max = rho + H
+    scat_d_max = builder.math('ADD', -200, -450, 'scat_d_max', v1=H)
+    builder.link(rho.outputs[0], scat_d_max.inputs[0])
     
-    x_mu_s = builder.math('DIVIDE', -200, -500, 'x_mu_s', v1=mu_s_range)
-    builder.link(mu_s_shifted.outputs[0], x_mu_s.inputs[0])
+    # x_mu = (d - d_min) / (d_max - d_min)
+    scat_d_minus_dmin = builder.math('SUBTRACT', 0, -450, 'scat_d-dmin')
+    builder.link(d.outputs[0], scat_d_minus_dmin.inputs[0])
+    builder.link(scat_d_min.outputs[0], scat_d_minus_dmin.inputs[1])
     
-    x_mu_s_clamped = builder.math('MINIMUM', 0, -500, 'x_mu_s_max', v1=1.0)
-    builder.link(x_mu_s.outputs[0], x_mu_s_clamped.inputs[0])
+    scat_dmax_minus_dmin = builder.math('SUBTRACT', 200, -450, 'scat_dmax-dmin')
+    builder.link(scat_d_max.outputs[0], scat_dmax_minus_dmin.inputs[0])
+    builder.link(scat_d_min.outputs[0], scat_dmax_minus_dmin.inputs[1])
     
-    x_mu_s_final = builder.math('MAXIMUM', 200, -500, 'x_mu_s_min', v1=0.0)
-    builder.link(x_mu_s_clamped.outputs[0], x_mu_s_final.inputs[0])
+    scat_denom_safe = builder.math('MAXIMUM', 400, -450, 'scat_denom', v1=0.0001)
+    builder.link(scat_dmax_minus_dmin.outputs[0], scat_denom_safe.inputs[0])
     
+    scat_x_mu = builder.math('DIVIDE', 600, -450, 'scat_x_mu')
+    builder.link(scat_d_minus_dmin.outputs[0], scat_x_mu.inputs[0])
+    builder.link(scat_denom_safe.outputs[0], scat_x_mu.inputs[1])
+    
+    # Clamp x_mu to [0, 1]
+    scat_x_mu_max = builder.math('MINIMUM', 800, -450, 'scat_x_mu_max', v1=1.0)
+    builder.link(scat_x_mu.outputs[0], scat_x_mu_max.inputs[0])
+    
+    scat_x_mu_clamp = builder.math('MAXIMUM', 1000, -450, 'scat_x_mu_clamp', v1=0.0)
+    builder.link(scat_x_mu_max.outputs[0], scat_x_mu_clamp.inputs[0])
+    
+    # Apply GetTextureCoordFromUnitRange for half texture (MU_SIZE/2)
+    mu_half_tex_scale = 1.0 - 1.0 / (SCATTERING_TEXTURE_MU_SIZE / 2)
+    mu_half_tex_offset = 0.5 / (SCATTERING_TEXTURE_MU_SIZE / 2)
+    
+    scat_u_mu_inner = builder.math('MULTIPLY', 1200, -450, 'u_mu_inner', v1=mu_half_tex_scale)
+    builder.link(scat_x_mu_clamp.outputs[0], scat_u_mu_inner.inputs[0])
+    
+    scat_u_mu_inner2 = builder.math('ADD', 1400, -450, 'u_mu_inner2', v1=mu_half_tex_offset)
+    builder.link(scat_u_mu_inner.outputs[0], scat_u_mu_inner2.inputs[0])
+    
+    # u_mu = 0.5 + 0.5 * inner (sky viewing case)
+    scat_u_mu_half = builder.math('MULTIPLY', 1600, -450, 'u_mu_half', v0=0.5)
+    builder.link(scat_u_mu_inner2.outputs[0], scat_u_mu_half.inputs[1])
+    
+    scat_u_mu = builder.math('ADD', 1800, -450, 'u_mu', v0=0.5)
+    builder.link(scat_u_mu_half.outputs[0], scat_u_mu.inputs[1])
+    
+    # -------------------------------------------------------------------------
+    # u_mu_s - NON-LINEAR Bruneton mapping (this is the key fix!)
+    # -------------------------------------------------------------------------
+    # d = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s, top_radius)
+    # Formula: -bottom_radius*mu_s + sqrt(bottom_radius²*(mu_s²-1) + top_radius²)
+    
+    mu_s_sq = builder.math('POWER', -600, -550, 'mu_s²', v1=2.0)
+    builder.link(mu_s_final.outputs[0], mu_s_sq.inputs[0])
+    
+    mu_s_sq_m1 = builder.math('SUBTRACT', -400, -550, 'mu_s²-1', v1=1.0)
+    builder.link(mu_s_sq.outputs[0], mu_s_sq_m1.inputs[0])
+    
+    # bottom_radius² * (mu_s² - 1)
+    br_sq_term = builder.math('MULTIPLY', -200, -550, 'br²×(mu_s²-1)', v0=BOTTOM_RADIUS * BOTTOM_RADIUS)
+    builder.link(mu_s_sq_m1.outputs[0], br_sq_term.inputs[1])
+    
+    # + top_radius²
+    d_discrim = builder.math('ADD', 0, -550, 'd_discrim', v1=TOP_RADIUS * TOP_RADIUS)
+    builder.link(br_sq_term.outputs[0], d_discrim.inputs[0])
+    
+    d_discrim_safe = builder.math('MAXIMUM', 200, -550, 'd_disc_safe', v1=0.0)
+    builder.link(d_discrim.outputs[0], d_discrim_safe.inputs[0])
+    
+    d_sqrt = builder.math('SQRT', 400, -550, 'd_sqrt')
+    builder.link(d_discrim_safe.outputs[0], d_sqrt.inputs[0])
+    
+    # -bottom_radius * mu_s
+    neg_br_mus = builder.math('MULTIPLY', 200, -600, '-br×mu_s', v0=-BOTTOM_RADIUS)
+    builder.link(mu_s_final.outputs[0], neg_br_mus.inputs[1])
+    
+    # d = -br*mu_s + sqrt(...)
+    d_mus = builder.math('ADD', 600, -550, 'd_mus')
+    builder.link(neg_br_mus.outputs[0], d_mus.inputs[0])
+    builder.link(d_sqrt.outputs[0], d_mus.inputs[1])
+    
+    d_mus_safe = builder.math('MAXIMUM', 800, -550, 'd_mus_safe', v1=0.0)
+    builder.link(d_mus.outputs[0], d_mus_safe.inputs[0])
+    
+    # d_min = top_radius - bottom_radius, d_max = H
+    d_mus_min = TOP_RADIUS - BOTTOM_RADIUS  # = 60
+    d_mus_max = H
+    
+    # a = (d - d_min) / (d_max - d_min)
+    d_mus_shifted = builder.math('SUBTRACT', 1000, -550, 'd_mus-dmin', v1=d_mus_min)
+    builder.link(d_mus_safe.outputs[0], d_mus_shifted.inputs[0])
+    
+    a_val = builder.math('DIVIDE', 1200, -550, 'a', v1=(d_mus_max - d_mus_min))
+    builder.link(d_mus_shifted.outputs[0], a_val.inputs[0])
+    
+    # D = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s_min, top_radius)
+    # This is a constant for mu_s_min = -0.2
+    D_const = -BOTTOM_RADIUS * MU_S_MIN + math.sqrt(BOTTOM_RADIUS * BOTTOM_RADIUS * (MU_S_MIN * MU_S_MIN - 1.0) + TOP_RADIUS * TOP_RADIUS)
+    A_const = (D_const - d_mus_min) / (d_mus_max - d_mus_min)
+    
+    # x_mu_s = max(1 - a/A, 0) / (1 + a)
+    a_over_A = builder.math('DIVIDE', 1400, -550, 'a/A', v1=A_const)
+    builder.link(a_val.outputs[0], a_over_A.inputs[0])
+    
+    one_minus_aA = builder.math('SUBTRACT', 1600, -550, '1-a/A', v0=1.0)
+    builder.link(a_over_A.outputs[0], one_minus_aA.inputs[1])
+    
+    one_minus_aA_safe = builder.math('MAXIMUM', 1800, -550, '1-a/A_safe', v1=0.0)
+    builder.link(one_minus_aA.outputs[0], one_minus_aA_safe.inputs[0])
+    
+    one_plus_a = builder.math('ADD', 1600, -600, '1+a', v0=1.0)
+    builder.link(a_val.outputs[0], one_plus_a.inputs[1])
+    
+    x_mu_s = builder.math('DIVIDE', 2000, -550, 'x_mu_s')
+    builder.link(one_minus_aA_safe.outputs[0], x_mu_s.inputs[0])
+    builder.link(one_plus_a.outputs[0], x_mu_s.inputs[1])
+    
+    # Apply GetTextureCoordFromUnitRange
     mu_s_tex_scale = 1.0 - 1.0 / SCATTERING_TEXTURE_MU_S_SIZE
     mu_s_tex_offset = 0.5 / SCATTERING_TEXTURE_MU_S_SIZE
     
-    u_mu_s_scaled = builder.math('MULTIPLY', 400, -500, 'u_mu_s_sc', v1=mu_s_tex_scale)
-    builder.link(x_mu_s_final.outputs[0], u_mu_s_scaled.inputs[0])
+    u_mu_s_scaled = builder.math('MULTIPLY', 2200, -550, 'u_mu_s_sc', v1=mu_s_tex_scale)
+    builder.link(x_mu_s.outputs[0], u_mu_s_scaled.inputs[0])
     
-    u_mu_s = builder.math('ADD', 600, -500, 'u_mu_s', v1=mu_s_tex_offset)
+    u_mu_s = builder.math('ADD', 2400, -550, 'u_mu_s', v1=mu_s_tex_offset)
     builder.link(u_mu_s_scaled.outputs[0], u_mu_s.inputs[0])
     
     # u_nu (view-sun angle)
@@ -506,13 +611,15 @@ def create_sky_node_group(lut_dir=None):
     builder.link(tex_x_plus1_mus.outputs[0], uvw1_x.inputs[0])
     
     # Sample scattering at both nu values
+    # Note: scattering texture is tiled - X combines nu slice + mu_s, Y is u_mu, Z (depth) is u_r
+    # For 2D tiled texture: we sample at (uvw_x, u_mu) and interpolate across depth slices
     scat_uv0 = builder.combine_xyz(1200, -600, 'Scat_UV0')
     builder.link(uvw0_x.outputs[0], scat_uv0.inputs['X'])
-    builder.link(u_mu_scat_final.outputs[0], scat_uv0.inputs['Y'])
+    builder.link(scat_u_mu.outputs[0], scat_uv0.inputs['Y'])
     
     scat_uv1 = builder.combine_xyz(1200, -700, 'Scat_UV1')
     builder.link(uvw1_x.outputs[0], scat_uv1.inputs['X'])
-    builder.link(u_mu_scat_final.outputs[0], scat_uv1.inputs['Y'])
+    builder.link(scat_u_mu.outputs[0], scat_uv1.inputs['Y'])
     
     builder.link(scat_uv0.outputs[0], tex_scattering.inputs['Vector'])
     builder.link(scat_uv1.outputs[0], tex_scattering2.inputs['Vector'])
