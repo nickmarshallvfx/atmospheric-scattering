@@ -44,7 +44,7 @@ SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE
 # =============================================================================
 
 SKY_NODE_GROUP_NAME = "Helios_Sky"
-SKY_NODE_VERSION = 5  # Increment this to verify code changes are picked up
+SKY_NODE_VERSION = 6  # Increment this to verify code changes are picked up
 
 
 # =============================================================================
@@ -644,22 +644,28 @@ def create_sky_node_group(lut_dir=None):
                                     v1=float(SCATTERING_TEXTURE_DEPTH))
     builder.link(slice1_plus_uvw1.outputs[0], final_x1_slice1.inputs[0])
     
+    # Flip Y coordinate - Blender Image Texture uses opposite V convention from OSL
+    # OSL: V=0 at bottom, V=1 at top
+    # Blender: V=0 at top, V=1 at bottom (for EXR images)
+    u_mu_flipped = builder.math('SUBTRACT', 1500, -400, 'u_mu_flip', v0=1.0)
+    builder.link(u_mu_scat_final.outputs[0], u_mu_flipped.inputs[1])
+    
     # Create UV coordinates for all 4 samples (2 nu × 2 depth)
     scat_uv_nu0_d0 = builder.combine_xyz(1600, -600, 'UV_nu0_d0')
     builder.link(final_x0_slice0.outputs[0], scat_uv_nu0_d0.inputs['X'])
-    builder.link(u_mu_scat_final.outputs[0], scat_uv_nu0_d0.inputs['Y'])
+    builder.link(u_mu_flipped.outputs[0], scat_uv_nu0_d0.inputs['Y'])
     
     scat_uv_nu1_d0 = builder.combine_xyz(1600, -650, 'UV_nu1_d0')
     builder.link(final_x1_slice0.outputs[0], scat_uv_nu1_d0.inputs['X'])
-    builder.link(u_mu_scat_final.outputs[0], scat_uv_nu1_d0.inputs['Y'])
+    builder.link(u_mu_flipped.outputs[0], scat_uv_nu1_d0.inputs['Y'])
     
     scat_uv_nu0_d1 = builder.combine_xyz(1600, -700, 'UV_nu0_d1')
     builder.link(final_x0_slice1.outputs[0], scat_uv_nu0_d1.inputs['X'])
-    builder.link(u_mu_scat_final.outputs[0], scat_uv_nu0_d1.inputs['Y'])
+    builder.link(u_mu_flipped.outputs[0], scat_uv_nu0_d1.inputs['Y'])
     
     scat_uv_nu1_d1 = builder.combine_xyz(1600, -750, 'UV_nu1_d1')
     builder.link(final_x1_slice1.outputs[0], scat_uv_nu1_d1.inputs['X'])
-    builder.link(u_mu_scat_final.outputs[0], scat_uv_nu1_d1.inputs['Y'])
+    builder.link(u_mu_flipped.outputs[0], scat_uv_nu1_d1.inputs['Y'])
     
     # Need 4 texture nodes for bilinear interpolation
     tex_scat_nu0_d0 = builder.image_texture(1800, -550, 'Scat_nu0_d0', 
@@ -729,41 +735,29 @@ def create_sky_node_group(lut_dir=None):
     builder.link(denom_pow.outputs[0], mie_phase.inputs[1])
     
     # =========================================================================
-    # SAMPLE SINGLE MIE SCATTERING FROM SEPARATE TEXTURE
+    # EXTRACT MIE SCATTERING (same extrapolation as OSL)
     # =========================================================================
-    # Use actual precomputed single_mie_scattering.exr instead of extrapolation
-    # This texture uses the same coordinate system as the combined scattering
+    # OSL extrapolates single Mie from combined scattering texture.
+    # Formula: mie = scattering * (rayleigh[0]/mie[0]) * (mie/rayleigh)
+    # With default coefficients: rayleigh = (0.0058, 0.0135, 0.0331), mie = (0.004, 0.004, 0.004)
+    # Resulting factors: (1.0, 0.43, 0.176)
     
-    single_mie_path = os.path.join(lut_dir, "single_mie_scattering.exr")
+    sep_scat = builder.separate_color(2500, -600, 'Sep_Scattering')
+    builder.link(scat_interp.outputs[2], sep_scat.inputs['Color'])
     
-    # Create 4 texture nodes for single Mie (same interpolation as combined scattering)
-    tex_mie_nu0_d0 = builder.image_texture(2500, -550, 'Mie_nu0_d0', single_mie_path)
-    tex_mie_nu1_d0 = builder.image_texture(2500, -650, 'Mie_nu1_d0', single_mie_path)
-    tex_mie_nu0_d1 = builder.image_texture(2500, -750, 'Mie_nu0_d1', single_mie_path)
-    tex_mie_nu1_d1 = builder.image_texture(2500, -850, 'Mie_nu1_d1', single_mie_path)
+    mie_r = builder.math('MULTIPLY', 2700, -550, 'Mie_R', v1=1.0)
+    builder.link(sep_scat.outputs['Red'], mie_r.inputs[0])
     
-    # Use same UV coordinates as combined scattering
-    builder.link(scat_uv_nu0_d0.outputs[0], tex_mie_nu0_d0.inputs['Vector'])
-    builder.link(scat_uv_nu1_d0.outputs[0], tex_mie_nu1_d0.inputs['Vector'])
-    builder.link(scat_uv_nu0_d1.outputs[0], tex_mie_nu0_d1.inputs['Vector'])
-    builder.link(scat_uv_nu1_d1.outputs[0], tex_mie_nu1_d1.inputs['Vector'])
+    mie_g = builder.math('MULTIPLY', 2700, -600, 'Mie_G', v1=0.43)
+    builder.link(sep_scat.outputs['Green'], mie_g.inputs[0])
     
-    # Interpolate single Mie: first along nu for each depth slice
-    mie_nu_interp_d0 = builder.mix('RGBA', 'MIX', 2700, -600, 'Mie_nu_d0')
-    builder.link(lerp_factor.outputs[0], mie_nu_interp_d0.inputs[0])
-    builder.link(tex_mie_nu0_d0.outputs['Color'], mie_nu_interp_d0.inputs[6])
-    builder.link(tex_mie_nu1_d0.outputs['Color'], mie_nu_interp_d0.inputs[7])
+    mie_b = builder.math('MULTIPLY', 2700, -650, 'Mie_B', v1=0.176)
+    builder.link(sep_scat.outputs['Blue'], mie_b.inputs[0])
     
-    mie_nu_interp_d1 = builder.mix('RGBA', 'MIX', 2700, -750, 'Mie_nu_d1')
-    builder.link(lerp_factor.outputs[0], mie_nu_interp_d1.inputs[0])
-    builder.link(tex_mie_nu0_d1.outputs['Color'], mie_nu_interp_d1.inputs[6])
-    builder.link(tex_mie_nu1_d1.outputs['Color'], mie_nu_interp_d1.inputs[7])
-    
-    # Then interpolate along depth
-    mie_interp = builder.mix('RGBA', 'MIX', 2900, -675, 'Mie_Final')
-    builder.link(depth_frac.outputs[0], mie_interp.inputs[0])
-    builder.link(mie_nu_interp_d0.outputs[2], mie_interp.inputs[6])
-    builder.link(mie_nu_interp_d1.outputs[2], mie_interp.inputs[7])
+    mie_color = builder.combine_color(2900, -600, 'Mie_Scattering')
+    builder.link(mie_r.outputs[0], mie_color.inputs['Red'])
+    builder.link(mie_g.outputs[0], mie_color.inputs['Green'])
+    builder.link(mie_b.outputs[0], mie_color.inputs['Blue'])
     
     # =========================================================================
     # APPLY PHASE FUNCTIONS TO SCATTERING COMPONENTS
@@ -774,9 +768,9 @@ def create_sky_node_group(lut_dir=None):
     builder.link(scat_interp.outputs[2], rayleigh_contrib.inputs[0])
     builder.link(rayleigh_phase.outputs[0], rayleigh_contrib.inputs['Scale'])
     
-    # Mie component: single_mie * Mie_phase
+    # Mie component: mie_scattering * Mie_phase
     mie_contrib = builder.vec_math('SCALE', 3100, -550, 'Mie_Contrib')
-    builder.link(mie_interp.outputs[2], mie_contrib.inputs[0])
+    builder.link(mie_color.outputs['Color'], mie_contrib.inputs[0])
     builder.link(mie_phase.outputs[0], mie_contrib.inputs['Scale'])
     
     # Total radiance = Rayleigh + Mie
