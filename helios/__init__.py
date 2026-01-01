@@ -129,6 +129,37 @@ def _update_preview_invalidate(self, context):
     _update_preview(self, context)
 
 
+# Update callback for quality change - always triggers rebake
+def _update_quality_change(self, context):
+    """Trigger rebake when quality setting changes."""
+    global _debounce_timer
+    import bpy
+    
+    scene = context.scene
+    settings = scene.helios
+    
+    # Mark LUTs as invalid
+    settings.luts_valid = False
+    
+    # Cancel any pending recompute
+    if _debounce_timer is not None:
+        try:
+            bpy.app.timers.unregister(_debounce_timer)
+        except:
+            pass
+        _debounce_timer = None
+    
+    # Schedule recompute immediately (no debounce needed for dropdown)
+    def do_quality_recompute():
+        global _debounce_timer
+        _debounce_timer = None
+        _do_recompute_luts(context)
+        return None
+    
+    _debounce_timer = do_quality_recompute
+    bpy.app.timers.register(do_quality_recompute, first_interval=0.1)
+
+
 class HeliosAtmosphereSettings(PropertyGroup):
     """Main property group for Helios atmosphere settings."""
     
@@ -204,6 +235,7 @@ class HeliosAtmosphereSettings(PropertyGroup):
             ('FINAL', "Final (4 orders)", "Full quality with 4 scattering orders (~40s)"),
         ],
         default='PREVIEW',
+        update=_update_quality_change,
     )
     
     # Atmospheric Composition (Artistic Controls)
