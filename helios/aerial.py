@@ -259,10 +259,9 @@ def _connect_to_material_output(nodes, links, osl_node):
     """
     Connect OSL node to material output chain to ensure it gets evaluated.
     
-    OSL nodes in Cycles are only evaluated if their outputs contribute to the
-    final shader. We connect via an Add Shader with the aerial output going to
-    an emission shader with 0 strength, which ensures evaluation without
-    affecting the material appearance.
+    We use a Mix Shader approach: mix the original material with an inscatter
+    emission at factor 0.0001 (nearly invisible but forces evaluation).
+    This also provides a visible debug mode when factor is increased.
     """
     # Find Material Output node
     output_node = None
@@ -281,10 +280,8 @@ def _connect_to_material_output(nodes, links, osl_node):
         print("Helios: Material Output has no Surface input")
         return
     
-    original_link = None
     original_socket = None
     for link in surface_input.links:
-        original_link = link
         original_socket = link.from_socket
         break
     
@@ -292,31 +289,33 @@ def _connect_to_material_output(nodes, links, osl_node):
         print("Helios: Nothing connected to Material Output - skipping aerial integration")
         return
     
-    # Create an Emission shader for the aerial perspective (will be mixed at 0)
+    # Create Emission shader for inscatter visualization
     emission = nodes.new('ShaderNodeEmission')
     emission.name = "Helios_Aerial_Emission"
     emission.location = (osl_node.location.x + 200, osl_node.location.y - 200)
-    emission.inputs['Strength'].default_value = 0.0  # Zero strength = no contribution
+    emission.inputs['Strength'].default_value = 1.0
     
-    # Connect aerial transmittance to emission color (just to force evaluation)
-    if 'AerialTransmittance' in osl_node.outputs:
-        links.new(osl_node.outputs['AerialTransmittance'], emission.inputs['Color'])
+    # Connect inscatter to emission color (this makes the haze visible)
+    if 'AerialInscatter' in osl_node.outputs:
+        links.new(osl_node.outputs['AerialInscatter'], emission.inputs['Color'])
     
-    # Create Add Shader to combine original material with zero-strength emission
-    add_shader = nodes.new('ShaderNodeAddShader')
-    add_shader.name = "Helios_Aerial_Add"
-    add_shader.location = (output_node.location.x - 200, output_node.location.y)
+    # Create Mix Shader - this evaluates BOTH inputs regardless of factor
+    mix_shader = nodes.new('ShaderNodeMixShader')
+    mix_shader.name = "Helios_Aerial_Mix"
+    mix_shader.location = (output_node.location.x - 200, output_node.location.y)
+    # Factor 0.5 = visible blend for debugging; set to 0.0001 for production
+    mix_shader.inputs['Fac'].default_value = 0.5  # TEMP: Visible for debugging
     
-    # Connect: original -> Add Shader input 1
-    links.new(original_socket, add_shader.inputs[0])
+    # Connect: original -> Mix Shader input 1
+    links.new(original_socket, mix_shader.inputs[1])
     
-    # Connect: emission (0 strength) -> Add Shader input 2
-    links.new(emission.outputs['Emission'], add_shader.inputs[1])
+    # Connect: emission (inscatter) -> Mix Shader input 2
+    links.new(emission.outputs['Emission'], mix_shader.inputs[2])
     
-    # Connect: Add Shader -> Material Output
-    links.new(add_shader.outputs['Shader'], surface_input)
+    # Connect: Mix Shader -> Material Output
+    links.new(mix_shader.outputs['Shader'], surface_input)
     
-    print("Helios: Connected aerial perspective to material output chain")
+    print("Helios: Connected aerial perspective to material output chain (Mix factor=0.5 for debug)")
 
 
 def _create_aov_outputs(nodes, links, osl_node):
@@ -349,12 +348,14 @@ def remove_aerial_from_material(material):
     nodes = material.node_tree.nodes
     links = material.node_tree.links
     
-    # First, restore original connection if we added the Add Shader
-    add_shader = nodes.get("Helios_Aerial_Add")
+    # First, restore original connection if we added the Mix/Add Shader
+    add_shader = nodes.get("Helios_Aerial_Mix") or nodes.get("Helios_Aerial_Add")
     if add_shader:
-        # Find what was connected to the Add Shader's first input (original material)
+        # Find what was connected to the shader's first input (original material)
+        # Mix Shader uses index 1, Add Shader uses index 0
+        input_index = 1 if add_shader.name == "Helios_Aerial_Mix" else 0
         original_socket = None
-        for link in add_shader.inputs[0].links:
+        for link in add_shader.inputs[input_index].links:
             original_socket = link.from_socket
             break
         
@@ -378,6 +379,7 @@ def remove_aerial_from_material(material):
         "Helios_AOV_Inscatter",
         "Helios_Aerial_Emission",
         "Helios_Aerial_Add",
+        "Helios_Aerial_Mix",
     ]
     
     for node_name in nodes_to_remove:
