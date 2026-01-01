@@ -198,16 +198,17 @@ def _update_aerial_node(osl_node, context, settings):
         osl_node.inputs['mu_s_min'].default_value = -0.2
     
     # Set scattering coefficients (scaled by density)
+    # OSL color inputs expect 4 values (RGBA)
     rayleigh_base = Vector((0.0058, 0.0135, 0.0331))
     mie_base = 0.004
     
     if 'rayleigh_scattering' in osl_node.inputs:
         scaled = rayleigh_base * settings.rayleigh_density
-        osl_node.inputs['rayleigh_scattering'].default_value = (scaled.x, scaled.y, scaled.z)
+        osl_node.inputs['rayleigh_scattering'].default_value = (scaled.x, scaled.y, scaled.z, 1.0)
     
     if 'mie_scattering' in osl_node.inputs:
         scaled_mie = mie_base * settings.mie_density
-        osl_node.inputs['mie_scattering'].default_value = (scaled_mie, scaled_mie, scaled_mie)
+        osl_node.inputs['mie_scattering'].default_value = (scaled_mie, scaled_mie, scaled_mie, 1.0)
     
     if 'mie_phase_g' in osl_node.inputs:
         osl_node.inputs['mie_phase_g'].default_value = settings.mie_phase_g
