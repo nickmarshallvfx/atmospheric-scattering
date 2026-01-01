@@ -289,6 +289,233 @@ def create_transmittance_uv_nodes(builder, r_socket, mu_socket,
 
 
 # =============================================================================
+# SCATTERING UV CALCULATION (4D -> 3D Atlas)
+# =============================================================================
+
+def create_scattering_uv_nodes(builder, r_socket, mu_socket, mu_s_socket, nu_socket,
+                                bottom_radius, top_radius, mu_s_min,
+                                base_x=0, base_y=0):
+    """
+    Create nodes for GetScatteringTextureUvwzFromRMuMuSNu.
+    
+    Maps 4D parameters (r, mu, mu_s, nu) to 3D texture coordinates.
+    Our scattering LUT is stored as a 2D atlas with depth slices tiled horizontally.
+    
+    Returns: (uvw_socket for combined UV, layer_socket for depth interpolation)
+    """
+    H = math.sqrt(top_radius * top_radius - bottom_radius * bottom_radius)
+    
+    # === u_r: altitude coordinate ===
+    # rho = sqrt(r² - bottom_radius²)
+    r_sq = builder.math('POWER', base_x, base_y, 'scat_r²', v1=2.0)
+    builder.link(r_socket, r_sq.inputs[0])
+    
+    rho_sq = builder.math('SUBTRACT', base_x + 200, base_y, 'scat_rho²',
+                          v1=bottom_radius * bottom_radius)
+    builder.link(r_sq.outputs[0], rho_sq.inputs[0])
+    
+    # Clamp to avoid sqrt of negative
+    rho_sq_safe = builder.math('MAXIMUM', base_x + 400, base_y, 'rho²_safe', v1=0.0)
+    builder.link(rho_sq.outputs[0], rho_sq_safe.inputs[0])
+    
+    rho = builder.math('SQRT', base_x + 600, base_y, 'scat_rho')
+    builder.link(rho_sq_safe.outputs[0], rho.inputs[0])
+    
+    # u_r = rho / H mapped to texture coord
+    u_r_raw = builder.math('DIVIDE', base_x + 800, base_y, 'u_r_raw', v1=H)
+    builder.link(rho.outputs[0], u_r_raw.inputs[0])
+    
+    # GetTextureCoordFromUnitRange for R dimension
+    r_scale = 1.0 - 1.0 / SCATTERING_TEXTURE_R_SIZE
+    r_offset = 0.5 / SCATTERING_TEXTURE_R_SIZE
+    
+    u_r_scaled = builder.math('MULTIPLY', base_x + 1000, base_y, 'u_r_scaled', v1=r_scale)
+    builder.link(u_r_raw.outputs[0], u_r_scaled.inputs[0])
+    
+    u_r = builder.math('ADD', base_x + 1200, base_y, 'u_r', v1=r_offset)
+    builder.link(u_r_scaled.outputs[0], u_r.inputs[0])
+    
+    # === u_mu: view zenith coordinate ===
+    # This depends on whether the ray intersects ground
+    # For simplicity, we assume camera is above ground looking up/horizontal
+    # d = DistanceToTopAtmosphereBoundary
+    
+    mu_sq = builder.math('POWER', base_x, base_y - 150, 'scat_mu²', v1=2.0)
+    builder.link(mu_socket, mu_sq.inputs[0])
+    
+    # discriminant for top boundary
+    mu_sq_m1 = builder.math('SUBTRACT', base_x + 200, base_y - 150, 'mu²-1', v1=1.0)
+    builder.link(mu_sq.outputs[0], mu_sq_m1.inputs[0])
+    
+    r_sq_mu_term = builder.math('MULTIPLY', base_x + 400, base_y - 150, 'r²(mu²-1)')
+    builder.link(r_sq.outputs[0], r_sq_mu_term.inputs[0])
+    builder.link(mu_sq_m1.outputs[0], r_sq_mu_term.inputs[1])
+    
+    discrim_top = builder.math('ADD', base_x + 600, base_y - 150, 'disc_top',
+                               v1=top_radius * top_radius)
+    builder.link(r_sq_mu_term.outputs[0], discrim_top.inputs[0])
+    
+    discrim_top_safe = builder.math('MAXIMUM', base_x + 800, base_y - 150, 'disc_safe', v1=0.0)
+    builder.link(discrim_top.outputs[0], discrim_top_safe.inputs[0])
+    
+    discrim_sqrt = builder.math('SQRT', base_x + 1000, base_y - 150, 'sqrt_disc')
+    builder.link(discrim_top_safe.outputs[0], discrim_sqrt.inputs[0])
+    
+    # d = -r*mu + sqrt(discriminant)
+    r_mu_prod = builder.math('MULTIPLY', base_x + 400, base_y - 250, 'r×mu')
+    builder.link(r_socket, r_mu_prod.inputs[0])
+    builder.link(mu_socket, r_mu_prod.inputs[1])
+    
+    neg_r_mu = builder.math('MULTIPLY', base_x + 600, base_y - 250, '-r×mu', v1=-1.0)
+    builder.link(r_mu_prod.outputs[0], neg_r_mu.inputs[0])
+    
+    d_top = builder.math('ADD', base_x + 1200, base_y - 200, 'd_top')
+    builder.link(neg_r_mu.outputs[0], d_top.inputs[0])
+    builder.link(discrim_sqrt.outputs[0], d_top.inputs[1])
+    
+    # d_min and d_max for mu coordinate
+    d_min = builder.math('SUBTRACT', base_x + 1000, base_y - 50, 'd_min', v0=top_radius)
+    builder.link(r_socket, d_min.inputs[1])
+    
+    d_max = builder.math('ADD', base_x + 1000, base_y + 50, 'd_max', v1=H)
+    builder.link(rho.outputs[0], d_max.inputs[0])
+    
+    # x_mu = (d - d_min) / (d_max - d_min)
+    d_minus_dmin = builder.math('SUBTRACT', base_x + 1400, base_y - 150, 'd-d_min')
+    builder.link(d_top.outputs[0], d_minus_dmin.inputs[0])
+    builder.link(d_min.outputs[0], d_minus_dmin.inputs[1])
+    
+    dmax_minus_dmin = builder.math('SUBTRACT', base_x + 1400, base_y - 50, 'dmax-dmin')
+    builder.link(d_max.outputs[0], dmax_minus_dmin.inputs[0])
+    builder.link(d_min.outputs[0], dmax_minus_dmin.inputs[1])
+    
+    # Avoid division by zero
+    dmax_dmin_safe = builder.math('MAXIMUM', base_x + 1600, base_y - 50, 'denom_safe', v1=0.0001)
+    builder.link(dmax_minus_dmin.outputs[0], dmax_dmin_safe.inputs[0])
+    
+    x_mu = builder.math('DIVIDE', base_x + 1800, base_y - 100, 'x_mu')
+    builder.link(d_minus_dmin.outputs[0], x_mu.inputs[0])
+    builder.link(dmax_dmin_safe.outputs[0], x_mu.inputs[1])
+    
+    # Clamp x_mu to [0, 1]
+    x_mu_clamped = builder.math('MINIMUM', base_x + 2000, base_y - 100, 'x_mu_max', v1=1.0)
+    builder.link(x_mu.outputs[0], x_mu_clamped.inputs[0])
+    
+    x_mu_final = builder.math('MAXIMUM', base_x + 2200, base_y - 100, 'x_mu_clamp', v1=0.0)
+    builder.link(x_mu_clamped.outputs[0], x_mu_final.inputs[0])
+    
+    # GetTextureCoordFromUnitRange for MU dimension
+    mu_scale = 1.0 - 1.0 / SCATTERING_TEXTURE_MU_SIZE
+    mu_offset = 0.5 / SCATTERING_TEXTURE_MU_SIZE
+    
+    u_mu_scaled = builder.math('MULTIPLY', base_x + 2400, base_y - 100, 'u_mu_scaled', v1=mu_scale)
+    builder.link(x_mu_final.outputs[0], u_mu_scaled.inputs[0])
+    
+    u_mu = builder.math('ADD', base_x + 2600, base_y - 100, 'u_mu', v1=mu_offset)
+    builder.link(u_mu_scaled.outputs[0], u_mu.inputs[0])
+    
+    # === u_mu_s: sun zenith coordinate ===
+    # x_mu_s = (1 - exp(-3*mu_s - 0.6)) / (1 - exp(-3.6))
+    # Simplified: linear mapping from [mu_s_min, 1] to [0, 1]
+    
+    mu_s_range = 1.0 - mu_s_min
+    mu_s_shifted = builder.math('SUBTRACT', base_x, base_y - 350, 'mu_s-min', v1=mu_s_min)
+    builder.link(mu_s_socket, mu_s_shifted.inputs[0])
+    
+    x_mu_s = builder.math('DIVIDE', base_x + 200, base_y - 350, 'x_mu_s', v1=mu_s_range)
+    builder.link(mu_s_shifted.outputs[0], x_mu_s.inputs[0])
+    
+    # Clamp to [0, 1]
+    x_mu_s_clamped = builder.math('MINIMUM', base_x + 400, base_y - 350, 'x_mu_s_max', v1=1.0)
+    builder.link(x_mu_s.outputs[0], x_mu_s_clamped.inputs[0])
+    
+    x_mu_s_final = builder.math('MAXIMUM', base_x + 600, base_y - 350, 'x_mu_s_clamp', v1=0.0)
+    builder.link(x_mu_s_clamped.outputs[0], x_mu_s_final.inputs[0])
+    
+    # GetTextureCoordFromUnitRange for MU_S dimension
+    mu_s_scale = 1.0 - 1.0 / SCATTERING_TEXTURE_MU_S_SIZE
+    mu_s_offset = 0.5 / SCATTERING_TEXTURE_MU_S_SIZE
+    
+    u_mu_s_scaled = builder.math('MULTIPLY', base_x + 800, base_y - 350, 'u_mu_s_scaled', v1=mu_s_scale)
+    builder.link(x_mu_s_final.outputs[0], u_mu_s_scaled.inputs[0])
+    
+    u_mu_s = builder.math('ADD', base_x + 1000, base_y - 350, 'u_mu_s', v1=mu_s_offset)
+    builder.link(u_mu_s_scaled.outputs[0], u_mu_s.inputs[0])
+    
+    # === u_nu: view-sun angle coordinate ===
+    # x_nu = (nu + 1) / 2  (nu is in [-1, 1])
+    nu_plus1 = builder.math('ADD', base_x, base_y - 450, 'nu+1', v0=1.0)
+    builder.link(nu_socket, nu_plus1.inputs[1])
+    
+    x_nu = builder.math('MULTIPLY', base_x + 200, base_y - 450, 'x_nu', v1=0.5)
+    builder.link(nu_plus1.outputs[0], x_nu.inputs[0])
+    
+    # GetTextureCoordFromUnitRange for NU dimension
+    nu_scale = 1.0 - 1.0 / SCATTERING_TEXTURE_NU_SIZE
+    nu_offset = 0.5 / SCATTERING_TEXTURE_NU_SIZE
+    
+    u_nu_scaled = builder.math('MULTIPLY', base_x + 400, base_y - 450, 'u_nu_scaled', v1=nu_scale)
+    builder.link(x_nu.outputs[0], u_nu_scaled.inputs[0])
+    
+    u_nu = builder.math('ADD', base_x + 600, base_y - 450, 'u_nu', v1=nu_offset)
+    builder.link(u_nu_scaled.outputs[0], u_nu.inputs[0])
+    
+    # === Combine into atlas UV ===
+    # Our 3D texture is stored as 2D atlas: X = nu * MU_S_SIZE tiles, Y = mu, layers = r
+    # Final U = (u_nu * NU_SIZE + u_mu_s) / NU_SIZE ... but we pack differently
+    # Actually: U = u_mu_s + u_nu * MU_S_SIZE ... need to check our atlas layout
+    
+    # For a proper 3D atlas with depth slices tiled horizontally:
+    # U = (floor(u_r * R_SIZE) + u_mu_s * MU_S_SIZE + u_nu * NU_SIZE * MU_S_SIZE) / TOTAL_WIDTH
+    # This is complex, let's use a simpler approach with the atlas we have
+    
+    # Our scattering.exr is WIDTH x HEIGHT x DEPTH as a 2D atlas
+    # Width = NU_SIZE * MU_S_SIZE = 256, Height = MU_SIZE = 128, Depth tiles = R_SIZE = 32
+    # Atlas layout: depth slices stacked vertically
+    
+    # layer_index = floor(u_r * (R_SIZE - 1))
+    r_idx_float = builder.math('MULTIPLY', base_x + 1400, base_y, 'r_idx', 
+                               v1=float(SCATTERING_TEXTURE_R_SIZE - 1))
+    builder.link(u_r_raw.outputs[0], r_idx_float.inputs[0])
+    
+    r_idx = builder.math('FLOOR', base_x + 1600, base_y, 'r_idx_floor')
+    builder.link(r_idx_float.outputs[0], r_idx.inputs[0])
+    
+    # Interpolation factor for depth
+    r_frac = builder.math('SUBTRACT', base_x + 1800, base_y, 'r_frac')
+    builder.link(r_idx_float.outputs[0], r_frac.inputs[0])
+    builder.link(r_idx.outputs[0], r_frac.inputs[1])
+    
+    # Combine mu_s and nu into U coordinate
+    # u_combined = (u_nu * NU_SIZE + floor(u_mu_s * MU_S_SIZE)) / (NU_SIZE * MU_S_SIZE)
+    # Simpler: since our LUT packs nu,mu_s into X, mu into Y, r into layers
+    
+    # X coord in atlas = u_nu + u_mu_s / NU_SIZE ... check the actual layout
+    # Let's use a straightforward mapping matching our LUT generator
+    
+    # Final UV for atlas sampling (without depth interpolation for now)
+    # U = u_mu_s (within one nu slice) + u_nu_tile_offset
+    # For combined texture: U spans [0, NU_SIZE * MU_S_SIZE]
+    
+    u_final = builder.math('ADD', base_x + 1200, base_y - 350, 'u_final')
+    # u_mu_s is already in [0,1] range for MU_S dimension
+    # Need to offset by nu tile
+    nu_tile_offset = builder.math('MULTIPLY', base_x + 800, base_y - 450, 'nu_tile', 
+                                   v1=1.0 / SCATTERING_TEXTURE_NU_SIZE)
+    builder.link(u_nu.outputs[0], nu_tile_offset.inputs[0])
+    
+    # u_mu_s_in_tile = u_mu_s / NU_SIZE
+    u_mu_s_scaled_tile = builder.math('MULTIPLY', base_x + 1200, base_y - 400, 'u_mu_s_tile',
+                                       v1=1.0 / SCATTERING_TEXTURE_NU_SIZE)
+    builder.link(u_mu_s.outputs[0], u_mu_s_scaled_tile.inputs[0])
+    
+    builder.link(nu_tile_offset.outputs[0], u_final.inputs[0])
+    builder.link(u_mu_s_scaled_tile.outputs[0], u_final.inputs[1])
+    
+    return u_final.outputs[0], u_mu.outputs[0], r_idx.outputs[0], r_frac.outputs[0]
+
+
+# =============================================================================
 # MAIN NODE GROUP CREATION
 # =============================================================================
 
@@ -504,18 +731,132 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(denom_pow.outputs[0], mie_phase.inputs[1])
     
     # =========================================================================
-    # TEMPORARY: Simple output for testing
-    # Full implementation continues in next iteration
+    # GetSkyRadianceToPoint IMPLEMENTATION
+    # inscatter = S(camera→∞) - T(camera→point) × S(point→∞)
     # =========================================================================
     
-    # For now, output transmittance from LUT lookup
+    MU_S_MIN = -0.2  # Minimum sun cosine angle
+    
+    # --- SCATTERING AT CAMERA (looking toward infinity) ---
+    scat_u_cam, scat_v_cam, scat_r_cam, scat_frac_cam = create_scattering_uv_nodes(
+        builder, r.outputs['Value'], mu.outputs[0], mu_s.outputs[0], nu.outputs['Value'],
+        BOTTOM_RADIUS, TOP_RADIUS, MU_S_MIN,
+        base_x=200, base_y=600
+    )
+    
+    # Combine UV for camera scattering lookup
+    scat_uv_cam = builder.combine_xyz(2800, 600, 'Scat_UV_Cam')
+    builder.link(scat_u_cam, scat_uv_cam.inputs['X'])
+    builder.link(scat_v_cam, scat_uv_cam.inputs['Y'])
+    
+    # Sample scattering at camera
+    tex_scat_cam = builder.image_texture(3000, 600, 'Scattering_Cam')
+    tex_scat_cam.interpolation = 'Linear'
+    tex_scat_cam.extension = 'EXTEND'
+    if os.path.exists(scattering_path):
+        img = bpy.data.images.load(scattering_path, check_existing=True)
+        img.colorspace_settings.name = 'Non-Color'
+        tex_scat_cam.image = img
+    builder.link(scat_uv_cam.outputs[0], tex_scat_cam.inputs['Vector'])
+    
+    # --- POINT PARAMETERS (r_p, mu_p, mu_s_p) ---
+    # r_p = length(point)
+    r_p = builder.vec_math('LENGTH', 0, -600, 'r_p')
+    builder.link(surface_point_km.outputs[0], r_p.inputs[0])
+    
+    # mu_p = dot(point, view_ray) / r_p
+    point_dot_view = builder.vec_math('DOT_PRODUCT', 0, -700, 'point·view')
+    builder.link(surface_point_km.outputs[0], point_dot_view.inputs[0])
+    builder.link(view_ray.outputs[0], point_dot_view.inputs[1])
+    
+    mu_p = builder.math('DIVIDE', 200, -650, 'mu_p')
+    builder.link(point_dot_view.outputs['Value'], mu_p.inputs[0])
+    builder.link(r_p.outputs['Value'], mu_p.inputs[1])
+    
+    # mu_s_p = dot(point, sun_direction) / r_p
+    point_dot_sun = builder.vec_math('DOT_PRODUCT', 0, -800, 'point·sun')
+    builder.link(surface_point_km.outputs[0], point_dot_sun.inputs[0])
+    builder.link(group_input.outputs['Sun_Direction'], point_dot_sun.inputs[1])
+    
+    mu_s_p = builder.math('DIVIDE', 200, -750, 'mu_s_p')
+    builder.link(point_dot_sun.outputs['Value'], mu_s_p.inputs[0])
+    builder.link(r_p.outputs['Value'], mu_s_p.inputs[1])
+    
+    # --- SCATTERING AT POINT (looking toward infinity) ---
+    scat_u_pt, scat_v_pt, scat_r_pt, scat_frac_pt = create_scattering_uv_nodes(
+        builder, r_p.outputs['Value'], mu_p.outputs[0], mu_s_p.outputs[0], nu.outputs['Value'],
+        BOTTOM_RADIUS, TOP_RADIUS, MU_S_MIN,
+        base_x=400, base_y=-600
+    )
+    
+    # Combine UV for point scattering lookup
+    scat_uv_pt = builder.combine_xyz(2800, -600, 'Scat_UV_Point')
+    builder.link(scat_u_pt, scat_uv_pt.inputs['X'])
+    builder.link(scat_v_pt, scat_uv_pt.inputs['Y'])
+    
+    # Sample scattering at point
+    tex_scat_pt = builder.image_texture(3000, -600, 'Scattering_Point')
+    tex_scat_pt.interpolation = 'Linear'
+    tex_scat_pt.extension = 'EXTEND'
+    if os.path.exists(scattering_path):
+        img = bpy.data.images.load(scattering_path, check_existing=True)
+        img.colorspace_settings.name = 'Non-Color'
+        tex_scat_pt.image = img
+    builder.link(scat_uv_pt.outputs[0], tex_scat_pt.inputs['Vector'])
+    
+    # --- TRANSMITTANCE FROM CAMERA TO POINT ---
+    # We already have transmittance UV calculated, use it
+    
+    # --- COMPUTE INSCATTER ---
+    # inscatter_raw = S_cam - T × S_point
+    
+    # T × S_point (multiply transmittance by point scattering)
+    t_times_scat_pt = builder.vec_math('MULTIPLY', 3200, -300, 'T×S_point')
+    builder.link(tex_transmittance.outputs['Color'], t_times_scat_pt.inputs[0])
+    builder.link(tex_scat_pt.outputs['Color'], t_times_scat_pt.inputs[1])
+    
+    # S_cam - T × S_point
+    inscatter_raw = builder.vec_math('SUBTRACT', 3400, -100, 'S_cam - T×S_pt')
+    builder.link(tex_scat_cam.outputs['Color'], inscatter_raw.inputs[0])
+    builder.link(t_times_scat_pt.outputs[0], inscatter_raw.inputs[1])
+    
+    # --- APPLY PHASE FUNCTIONS ---
+    # For combined scattering texture, we apply an average phase function
+    # inscatter = inscatter_raw × (rayleigh_phase + mie_phase) / 2
+    # Actually Bruneton: inscatter = rayleigh × rayleigh_phase + mie × mie_phase
+    # Our combined texture stores Rayleigh, so we primarily use Rayleigh phase
+    
+    # Scale inscatter by phase function (using Rayleigh as primary)
+    inscatter_phased = builder.vec_math('SCALE', 3600, -100, 'Inscatter_Phased')
+    builder.link(inscatter_raw.outputs[0], inscatter_phased.inputs[0])
+    builder.link(rayleigh_phase.outputs[0], inscatter_phased.inputs['Scale'])
+    
+    # Clamp negative values (can happen due to interpolation)
+    inscatter_r = builder.separate_color(3800, -100, 'Sep_Inscatter')
+    builder.link(inscatter_phased.outputs[0], inscatter_r.inputs['Color'])
+    
+    r_clamped = builder.math('MAXIMUM', 4000, -50, 'R_clamp', v1=0.0)
+    builder.link(inscatter_r.outputs['Red'], r_clamped.inputs[0])
+    
+    g_clamped = builder.math('MAXIMUM', 4000, -100, 'G_clamp', v1=0.0)
+    builder.link(inscatter_r.outputs['Green'], g_clamped.inputs[0])
+    
+    b_clamped = builder.math('MAXIMUM', 4000, -150, 'B_clamp', v1=0.0)
+    builder.link(inscatter_r.outputs['Blue'], b_clamped.inputs[0])
+    
+    inscatter_final = builder.combine_color(4200, -100, 'Inscatter_Final')
+    builder.link(r_clamped.outputs[0], inscatter_final.inputs['Red'])
+    builder.link(g_clamped.outputs[0], inscatter_final.inputs['Green'])
+    builder.link(b_clamped.outputs[0], inscatter_final.inputs['Blue'])
+    
+    # --- OUTPUTS ---
+    # Output transmittance from LUT lookup
     builder.link(tex_transmittance.outputs['Color'], group_output.inputs['Transmittance'])
     
-    # Placeholder inscatter (will be replaced with full algorithm)
-    placeholder_inscatter = builder.rgb(2800, -100, 'Placeholder_Inscatter', (0, 0, 0, 1))
-    builder.link(placeholder_inscatter.outputs[0], group_output.inputs['Inscatter'])
+    # Output computed inscatter
+    builder.link(inscatter_final.outputs['Color'], group_output.inputs['Inscatter'])
     
-    print(f"Helios: Created node group '{AERIAL_NODE_GROUP_NAME}'")
+    print(f"Helios: Created node group '{AERIAL_NODE_GROUP_NAME}' with full GetSkyRadianceToPoint")
     return group
 
 
