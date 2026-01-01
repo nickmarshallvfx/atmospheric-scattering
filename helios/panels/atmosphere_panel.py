@@ -301,10 +301,28 @@ class HELIOS_PT_aerial_panel(Panel):
         layout.use_property_split = True
         layout.use_property_decorate = False
         
+        settings = context.scene.helios
+        
         # Info box
         box = layout.box()
         box.label(text="Atmospheric haze for scene objects", icon='OUTLINER_OB_VOLUME')
         box.label(text="Outputs AOVs: transmittance, inscatter")
+        
+        layout.separator()
+        
+        # Shader mode toggle
+        col = layout.column(align=True)
+        col.label(text="Shader Mode:")
+        row = col.row(align=True)
+        row.prop(settings, "aerial_mode", expand=True)
+        
+        # Mode-specific info
+        if settings.aerial_mode == 'NODE':
+            box = layout.box()
+            box.label(text="Node-based: AOVs work correctly", icon='CHECKMARK')
+        else:
+            box = layout.box()
+            box.label(text="OSL: Reference only, AOVs empty", icon='ERROR')
         
         layout.separator()
         

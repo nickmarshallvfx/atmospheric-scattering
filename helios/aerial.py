@@ -6,6 +6,10 @@ This module handles:
 - Adding aerial perspective shader to materials
 - Managing parameters for the aerial perspective shader
 
+Supports two modes:
+- NODE: Node-based implementation (supports AOV output)
+- OSL: OSL shader implementation (reference, no AOV support in Blender 5.0)
+
 The aerial perspective shader computes transmittance and inscatter for scene objects,
 matching Eric Bruneton's GetSkyRadianceToPoint() implementation.
 """
@@ -17,6 +21,7 @@ from mathutils import Vector
 
 # Constants
 AERIAL_OSL_NODE_NAME = "Helios_Aerial_OSL"
+AERIAL_NODE_GROUP_NAME = "Helios_Aerial_NodeGroup"
 # AOV names must match exactly what's registered in the view layer
 AERIAL_AOV_TRANSMITTANCE = "Helios_Transmittance"
 AERIAL_AOV_INSCATTER = "Helios_Inscatter"
@@ -134,13 +139,74 @@ def add_aerial_to_material(material, context):
     """
     Add aerial perspective shader to a material.
     
-    This adds an OSL script node that outputs transmittance and inscatter AOVs.
+    Supports two modes based on settings.aerial_mode:
+    - NODE: Uses shader node group (supports AOV output)
+    - OSL: Uses OSL script (reference, no AOV support in Blender 5.0)
+    
     The AOVs can then be composited: beauty * transmittance + inscatter
     """
     if material is None or not material.use_nodes:
         return False
     
     settings = context.scene.helios
+    
+    # Route to appropriate implementation
+    if settings.aerial_mode == 'NODE':
+        return _add_aerial_node_based(material, context, settings)
+    else:
+        return _add_aerial_osl(material, context, settings)
+
+
+def _add_aerial_node_based(material, context, settings):
+    """
+    Add node-based aerial perspective to a material.
+    This version supports AOV output.
+    """
+    from . import aerial_nodes
+    
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    
+    # Check if node group already exists in material
+    if AERIAL_NODE_GROUP_NAME in nodes:
+        _update_aerial_node_group(nodes[AERIAL_NODE_GROUP_NAME], context, settings)
+        return True
+    
+    # Get or create the node group
+    node_group = aerial_nodes.get_or_create_aerial_node_group()
+    
+    # Add node group to material
+    group_node = nodes.new('ShaderNodeGroup')
+    group_node.name = AERIAL_NODE_GROUP_NAME
+    group_node.label = "Helios Aerial (Node)"
+    group_node.node_tree = node_group
+    group_node.location = (400, -200)
+    
+    # Set up inputs
+    _update_aerial_node_group(group_node, context, settings)
+    
+    # Create geometry node for position input
+    geom = nodes.new('ShaderNodeNewGeometry')
+    geom.name = "Helios_Geom"
+    geom.location = (200, -150)
+    links.new(geom.outputs['Position'], group_node.inputs['Position'])
+    
+    # Create AOV output nodes
+    _create_aov_outputs_node_based(nodes, links, group_node)
+    
+    # Force update
+    material.node_tree.update_tag()
+    material.update_tag()
+    
+    print(f"Helios: Added node-based aerial perspective to material '{material.name}'")
+    return True
+
+
+def _add_aerial_osl(material, context, settings):
+    """
+    Add OSL-based aerial perspective to a material.
+    This is the reference implementation but does NOT support AOV output in Blender 5.0.
+    """
     nodes = material.node_tree.nodes
     links = material.node_tree.links
     
@@ -159,7 +225,7 @@ def add_aerial_to_material(material, context):
     # Create OSL node
     osl_node = nodes.new('ShaderNodeScript')
     osl_node.name = AERIAL_OSL_NODE_NAME
-    osl_node.label = "Helios Aerial Perspective"
+    osl_node.label = "Helios Aerial Perspective (OSL)"
     osl_node.location = (400, -200)
     osl_node.mode = 'EXTERNAL'
     osl_node.filepath = osl_path
@@ -172,17 +238,15 @@ def add_aerial_to_material(material, context):
     # Set LUT paths and parameters
     _update_aerial_node(osl_node, context, settings)
     
-    # Create AOV output nodes
+    # NOTE: AOV outputs don't work with OSL in Blender 5.0
+    # We still create them for reference but they will be empty
     _create_aov_outputs(nodes, links, osl_node)
     
-    # CRITICAL: Force shader recompile so AOV nodes are evaluated
+    # Force update
     material.node_tree.update_tag()
     material.update_tag()
     
-    # DISABLED for testing - see if this interferes with AOVs
-    # _connect_to_material_output(nodes, links, osl_node)
-    
-    print(f"Helios: Added aerial perspective to material '{material.name}'")
+    print(f"Helios: Added OSL aerial perspective to material '{material.name}' (AOVs will be empty)")
     return True
 
 
@@ -258,6 +322,62 @@ def _update_aerial_node(osl_node, context, settings):
         osl_node.inputs['debug_mode'].default_value = 1  # TEMP: Enable debug to verify AOV connection
     
     print(f"Helios: Sun direction: {sun_dir}")
+
+
+def _update_aerial_node_group(group_node, context, settings):
+    """Update node-based aerial perspective group parameters."""
+    # Get camera position in world coords (the node group will convert to km)
+    camera = context.scene.camera
+    if camera:
+        cam_pos = camera.matrix_world.translation
+        if 'Camera_Position' in group_node.inputs:
+            group_node.inputs['Camera_Position'].default_value = (cam_pos.x, cam_pos.y, cam_pos.z)
+    
+    # Sun direction
+    sun_dir = get_sun_direction(settings)
+    if 'Sun_Direction' in group_node.inputs:
+        group_node.inputs['Sun_Direction'].default_value = (sun_dir.x, sun_dir.y, sun_dir.z)
+    
+    # Planet center (in Blender coords, surface at Z=0)
+    if 'Planet_Center' in group_node.inputs:
+        group_node.inputs['Planet_Center'].default_value = (0, 0, -6360000.0)
+    
+    # Scene scale
+    if 'Scene_Scale' in group_node.inputs:
+        group_node.inputs['Scene_Scale'].default_value = 0.001
+    
+    # Atmosphere parameters
+    if 'Bottom_Radius' in group_node.inputs:
+        group_node.inputs['Bottom_Radius'].default_value = 6360.0
+    if 'Top_Radius' in group_node.inputs:
+        group_node.inputs['Top_Radius'].default_value = 6420.0
+    if 'Mie_Phase_G' in group_node.inputs:
+        group_node.inputs['Mie_Phase_G'].default_value = settings.mie_phase_g
+    if 'Sun_Intensity' in group_node.inputs:
+        group_node.inputs['Sun_Intensity'].default_value = settings.sun_intensity
+
+
+def _create_aov_outputs_node_based(nodes, links, group_node):
+    """Create AOV output nodes for node-based aerial perspective."""
+    # Transmittance AOV
+    aov_trans = nodes.new('ShaderNodeOutputAOV')
+    aov_trans.name = "Helios_AOV_Transmittance"
+    aov_trans.location = (group_node.location.x + 200, group_node.location.y + 50)
+    aov_trans.aov_name = AERIAL_AOV_TRANSMITTANCE
+    
+    if 'Transmittance' in group_node.outputs:
+        links.new(group_node.outputs['Transmittance'], aov_trans.inputs['Color'])
+    
+    # Inscatter AOV
+    aov_inscatter = nodes.new('ShaderNodeOutputAOV')
+    aov_inscatter.name = "Helios_AOV_Inscatter"
+    aov_inscatter.location = (group_node.location.x + 200, group_node.location.y - 100)
+    aov_inscatter.aov_name = AERIAL_AOV_INSCATTER
+    
+    if 'Inscatter' in group_node.outputs:
+        links.new(group_node.outputs['Inscatter'], aov_inscatter.inputs['Color'])
+    
+    print(f"Helios: Created AOV outputs for node-based aerial perspective")
 
 
 def _connect_to_material_output(nodes, links, osl_node):
@@ -403,9 +523,10 @@ def remove_aerial_from_material(material):
             if surface_input:
                 links.new(original_socket, surface_input)
     
-    # Remove all Helios aerial nodes
+    # Remove all Helios aerial nodes (both OSL and node-based)
     nodes_to_remove = [
         AERIAL_OSL_NODE_NAME,
+        AERIAL_NODE_GROUP_NAME,
         "Helios_AOV_Transmittance",
         "Helios_AOV_Inscatter",
         "Helios_Aerial_Emission",

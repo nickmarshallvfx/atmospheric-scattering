@@ -340,6 +340,17 @@ class HeliosAtmosphereSettings(PropertyGroup):
         description="Use GPU acceleration (CuPy) for precomputation if available",
         default=True,
     )
+    
+    # Aerial Perspective Mode
+    aerial_mode: EnumProperty(
+        name="Aerial Mode",
+        description="Shader implementation for aerial perspective (Node-based supports AOVs, OSL is reference)",
+        items=[
+            ('NODE', "Node-Based", "Use shader nodes (supports AOV output)"),
+            ('OSL', "OSL", "Use OSL shader (reference, no AOV support in Blender 5.0)"),
+        ],
+        default='NODE',
+    )
 
 
 classes = (
