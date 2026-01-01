@@ -321,6 +321,9 @@ def _connect_to_material_output(nodes, links, osl_node):
 def _create_aov_outputs(nodes, links, osl_node):
     """Create AOV output nodes for transmittance and inscatter."""
     
+    print(f"Helios: Creating AOV outputs...")
+    print(f"Helios: OSL output sockets: {[(o.name, o.type) for o in osl_node.outputs]}")
+    
     # Transmittance AOV output
     if 'AerialTransmittance' in osl_node.outputs:
         aov_trans = nodes.new('ShaderNodeOutputAOV')
@@ -328,7 +331,12 @@ def _create_aov_outputs(nodes, links, osl_node):
         aov_trans.label = "Transmittance AOV"
         aov_trans.location = (osl_node.location.x + 300, osl_node.location.y)
         aov_trans.aov_name = AERIAL_AOV_TRANSMITTANCE
+        
+        # Debug: Check what inputs the AOV node has
+        print(f"Helios: AOV node inputs: {[(i.name, i.type) for i in aov_trans.inputs]}")
+        
         links.new(osl_node.outputs['AerialTransmittance'], aov_trans.inputs['Color'])
+        print(f"Helios: Connected AerialTransmittance -> {AERIAL_AOV_TRANSMITTANCE}")
     
     # Inscatter AOV output
     if 'AerialInscatter' in osl_node.outputs:
@@ -338,6 +346,9 @@ def _create_aov_outputs(nodes, links, osl_node):
         aov_inscatter.location = (osl_node.location.x + 300, osl_node.location.y - 100)
         aov_inscatter.aov_name = AERIAL_AOV_INSCATTER
         links.new(osl_node.outputs['AerialInscatter'], aov_inscatter.inputs['Color'])
+        print(f"Helios: Connected AerialInscatter -> {AERIAL_AOV_INSCATTER}")
+    else:
+        print(f"Helios: WARNING - AerialInscatter output not found!")
 
 
 def remove_aerial_from_material(material):
