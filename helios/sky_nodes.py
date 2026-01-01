@@ -44,7 +44,7 @@ SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE
 # =============================================================================
 
 SKY_NODE_GROUP_NAME = "Helios_Sky"
-SKY_NODE_VERSION = 6  # Increment this to verify code changes are picked up
+SKY_NODE_VERSION = 7  # Increment this to verify code changes are picked up
 
 
 # =============================================================================
@@ -204,6 +204,9 @@ def create_sky_node_group(lut_dir=None):
         group.interface.new_socket('Mie_Phase_G', in_out='INPUT', socket_type='NodeSocketFloat')
         group.interface.new_socket('Sun_Intensity', in_out='INPUT', socket_type='NodeSocketFloat')
         group.interface.new_socket('Exposure', in_out='INPUT', socket_type='NodeSocketFloat')
+        group.interface.new_socket('Sun_Angular_Radius', in_out='INPUT', socket_type='NodeSocketFloat')
+        group.interface.new_socket('Solar_Irradiance', in_out='INPUT', socket_type='NodeSocketColor')
+        group.interface.new_socket('Add_Sun_Disk', in_out='INPUT', socket_type='NodeSocketFloat')
         
         # Outputs
         group.interface.new_socket('Sky', in_out='OUTPUT', socket_type='NodeSocketColor')
@@ -219,6 +222,9 @@ def create_sky_node_group(lut_dir=None):
         group.inputs.new('NodeSocketFloat', 'Mie_Phase_G')
         group.inputs.new('NodeSocketFloat', 'Sun_Intensity')
         group.inputs.new('NodeSocketFloat', 'Exposure')
+        group.inputs.new('NodeSocketFloat', 'Sun_Angular_Radius')
+        group.inputs.new('NodeSocketColor', 'Solar_Irradiance')
+        group.inputs.new('NodeSocketFloat', 'Add_Sun_Disk')
         
         group.outputs.new('NodeSocketColor', 'Sky')
         group.outputs.new('NodeSocketColor', 'Transmittance')
@@ -236,6 +242,12 @@ def create_sky_node_group(lut_dir=None):
             socket.default_value = 1.0
         elif socket.name == 'Exposure':
             socket.default_value = 10.0
+        elif socket.name == 'Sun_Angular_Radius':
+            socket.default_value = 0.004675  # ~0.27 degrees (matches SUN_ANGULAR_RADIUS)
+        elif socket.name == 'Solar_Irradiance':
+            socket.default_value = (1.474, 1.8504, 1.91198, 1.0)  # Precomputed RGB
+        elif socket.name == 'Add_Sun_Disk':
+            socket.default_value = 1.0  # Enabled by default
     
     # =========================================================================
     # LOAD LUT TEXTURES
@@ -783,9 +795,70 @@ def create_sky_node_group(lut_dir=None):
     builder.link(radiance.outputs[0], radiance_scaled.inputs[0])
     builder.link(group_input.outputs['Sun_Intensity'], radiance_scaled.inputs['Scale'])
     
+    # =========================================================================
+    # SUN DISK RENDERING
+    # =========================================================================
+    # Add sun disk if ray points at sun: cos(view, sun) > cos(sun_angular_radius)
+    # Sun radiance = solar_irradiance / (PI * sun_angular_radius^2)
+    
+    # cos(angle) = dot(view_direction, sun_direction)
+    cos_sun_angle = builder.vec_math('DOT_PRODUCT', 3600, -200, 'Cos_Sun_Angle')
+    builder.link(group_input.outputs['View_Direction'], cos_sun_angle.inputs[0])
+    builder.link(group_input.outputs['Sun_Direction'], cos_sun_angle.inputs[1])
+    
+    # cos(sun_angular_radius)
+    cos_sun_radius = builder.math('COSINE', 3600, -100, 'Cos_Sun_Radius')
+    builder.link(group_input.outputs['Sun_Angular_Radius'], cos_sun_radius.inputs[0])
+    
+    # Inside sun disk: cos_sun_angle > cos_sun_radius
+    sun_mask = builder.math('GREATER_THAN', 3800, -150, 'Sun_Mask')
+    builder.link(cos_sun_angle.outputs['Value'], sun_mask.inputs[0])
+    builder.link(cos_sun_radius.outputs[0], sun_mask.inputs[1])
+    
+    # Multiply by Add_Sun_Disk toggle
+    sun_mask_toggled = builder.math('MULTIPLY', 4000, -150, 'Sun_Mask_Toggle')
+    builder.link(sun_mask.outputs[0], sun_mask_toggled.inputs[0])
+    builder.link(group_input.outputs['Add_Sun_Disk'], sun_mask_toggled.inputs[1])
+    
+    # Sun solid angle = PI * sun_angular_radius^2
+    sun_radius_sq = builder.math('POWER', 3600, 0, 'Radius_Sq', v1=2.0)
+    builder.link(group_input.outputs['Sun_Angular_Radius'], sun_radius_sq.inputs[0])
+    
+    sun_solid_angle = builder.math('MULTIPLY', 3800, 0, 'Solid_Angle', v0=math.pi)
+    builder.link(sun_radius_sq.outputs[0], sun_solid_angle.inputs[1])
+    
+    # Sun radiance = solar_irradiance / solid_angle
+    sun_radiance = builder.vec_math('SCALE', 4000, 0, 'Sun_Radiance_Raw')
+    builder.link(group_input.outputs['Solar_Irradiance'], sun_radiance.inputs[0])
+    
+    # Divide by solid angle (multiply by 1/solid_angle)
+    inv_solid_angle = builder.math('DIVIDE', 3900, 50, 'Inv_Solid_Angle', v0=1.0)
+    builder.link(sun_solid_angle.outputs[0], inv_solid_angle.inputs[1])
+    builder.link(inv_solid_angle.outputs[0], sun_radiance.inputs['Scale'])
+    
+    # Attenuate sun by transmittance
+    sun_attenuated = builder.vec_math('MULTIPLY', 4200, 0, 'Sun_Attenuated')
+    builder.link(sun_radiance.outputs[0], sun_attenuated.inputs[0])
+    builder.link(tex_transmittance.outputs['Color'], sun_attenuated.inputs[1])
+    
+    # Apply sun intensity
+    sun_with_intensity = builder.vec_math('SCALE', 4400, 0, 'Sun_Intensity')
+    builder.link(sun_attenuated.outputs[0], sun_with_intensity.inputs[0])
+    builder.link(group_input.outputs['Sun_Intensity'], sun_with_intensity.inputs['Scale'])
+    
+    # Mask sun contribution
+    sun_masked = builder.vec_math('SCALE', 4600, 0, 'Sun_Masked')
+    builder.link(sun_with_intensity.outputs[0], sun_masked.inputs[0])
+    builder.link(sun_mask_toggled.outputs[0], sun_masked.inputs['Scale'])
+    
+    # Add sun to radiance
+    radiance_with_sun = builder.vec_math('ADD', 4800, -250, 'Radiance_With_Sun')
+    builder.link(radiance_scaled.outputs[0], radiance_with_sun.inputs[0])
+    builder.link(sun_masked.outputs[0], radiance_with_sun.inputs[1])
+    
     # Apply exposure for Sky output
-    sky_exposed = builder.vec_math('SCALE', 3200, -300, 'Sky_Exposed')
-    builder.link(radiance_scaled.outputs[0], sky_exposed.inputs[0])
+    sky_exposed = builder.vec_math('SCALE', 5000, -250, 'Sky_Exposed')
+    builder.link(radiance_with_sun.outputs[0], sky_exposed.inputs[0])
     builder.link(group_input.outputs['Exposure'], sky_exposed.inputs['Scale'])
     
     # =========================================================================
@@ -798,8 +871,8 @@ def create_sky_node_group(lut_dir=None):
     # Transmittance from LUT
     builder.link(tex_transmittance.outputs['Color'], group_output.inputs['Transmittance'])
     
-    # Inscatter = radiance (without exposure, for compositing)
-    builder.link(radiance_scaled.outputs[0], group_output.inputs['Inscatter'])
+    # Inscatter = radiance with sun (without exposure, for compositing)
+    builder.link(radiance_with_sun.outputs[0], group_output.inputs['Inscatter'])
     
     print(f"Helios: Created sky node group '{SKY_NODE_GROUP_NAME}' (VERSION {SKY_NODE_VERSION})")
     return group

@@ -15,7 +15,7 @@ define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
                     <page id="Viewer.1"/>
                 </dock>
                 <split size="449"/>
-                <dock id="" activePageId="DAG.1">
+                <dock id="" activePageId="DAG.1" focus="true">
                     <page id="DAG.1"/>
                     <page id="Curve Editor.1"/>
                     <page id="DopeSheet.1"/>
@@ -248,56 +248,6 @@ Merge2 {
 Read {
  inputs 0
  file_type exr
- file c:/Users/space/OneDrive/Desktop/nodeBased_8degElev.exr
- format "960 540 0 0 960 540 1 "
- origset true
- name Read11
- xpos 950
- ypos -87
-}
-add_layer {ViewLayer_Helios_Sky ViewLayer_Helios_Sky.red ViewLayer_Helios_Sky.green ViewLayer_Helios_Sky.blue ViewLayer_Helios_Sky.alpha}
-Shuffle2 {
- fromInput1 {{0} B}
- in1 ViewLayer_Helios_Sky
- fromInput2 {{0} B}
- mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
- name Shuffle7
- xpos 950
- ypos 39
-}
-Read {
- inputs 0
- file_type exr
- file C:/Users/space/OneDrive/Desktop/nodeBasedDefaults.exr
- format "960 540 0 0 960 540 1 "
- origset true
- version 5
- name Read9
- xpos 840
- ypos -81
-}
-Shuffle2 {
- fromInput1 {{0} B}
- in1 ViewLayer_Helios_Sky
- fromInput2 {{0} B}
- mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
- name Shuffle5
- xpos 840
- ypos 39
-}
-set N39fe5000 [stack 0]
-EXPTool {
- mode Stops
- red 2
- green 2
- blue 2
- name Exposure1
- xpos 840
- ypos 63
-}
-Read {
- inputs 0
- file_type exr
  file C:/Users/space/OneDrive/Desktop/OSLDefaults.exr
  format "960 540 0 0 960 540 1 "
  origset true
@@ -305,6 +255,7 @@ Read {
  xpos 1060
  ypos -80
 }
+set N3a459800 [stack 0]
 add_layer {ViewLayer_Environment ViewLayer_Environment.red ViewLayer_Environment.green ViewLayer_Environment.blue}
 Shuffle2 {
  fromInput1 {{0} B}
@@ -315,7 +266,114 @@ Shuffle2 {
  xpos 1060
  ypos 39
 }
-push $N39fe5000
+push $N3a459800
+add_layer {ViewLayer_Combined ViewLayer_Combined.red ViewLayer_Combined.green ViewLayer_Combined.blue ViewLayer_Combined.alpha}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Combined
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle9
+ xpos 1170
+ ypos 39
+}
+Read {
+ inputs 0
+ file_type exr
+ file C:/Users/space/OneDrive/Desktop/nodeBasedDefaults.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ version 6
+ name Read9
+ xpos 840
+ ypos -81
+}
+set N3a459000 [stack 0]
+add_layer {ViewLayer_Helios_Sky ViewLayer_Helios_Sky.red ViewLayer_Helios_Sky.green ViewLayer_Helios_Sky.blue ViewLayer_Helios_Sky.alpha}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Helios_Sky
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle5
+ xpos 840
+ ypos 39
+}
+push $N3a459000
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Combined
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle8
+ xpos 705
+ ypos 69
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/OneDrive/Desktop/nodeBased_8degElev.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ version 6
+ raw true
+ name Read12
+ xpos 840
+ ypos -279
+}
+set N3a458400 [stack 0]
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Combined
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle12
+ xpos 778
+ ypos -129
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/OneDrive/Desktop/OSL_8degElev.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ raw true
+ name Read13
+ xpos 1060
+ ypos -278
+}
+set N3a458c00 [stack 0]
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Combined
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle10
+ xpos 1136
+ ypos -135
+}
+push $N3a458400
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Helios_Sky
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle11
+ xpos 882
+ ypos -129
+}
+push $N3a458c00
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Environment
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Environment.red 0 0 rgba.red 0 0 ViewLayer_Environment.green 0 1 rgba.green 0 1 ViewLayer_Environment.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle7
+ xpos 1026
+ ypos -135
+}
+set N39fe4000 [stack 0]
+push $N39fe4000
 Viewer {
  inputs 2
  frame 10
