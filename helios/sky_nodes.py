@@ -445,27 +445,85 @@ def create_sky_node_group(lut_dir=None):
     u_mu_scat_final = builder.math('ADD', 400, -400, 'u_mu_final', v0=0.5)
     builder.link(u_mu_scat.outputs[0], u_mu_scat_final.inputs[1])
     
-    # u_mu_s for scattering (simplified linear mapping)
-    mu_s_range = 1.0 - MU_S_MIN
-    mu_s_shifted = builder.math('SUBTRACT', -400, -500, 'mu_s_shift', v1=MU_S_MIN)
-    builder.link(mu_s_final.outputs[0], mu_s_shifted.inputs[0])
+    # u_mu_s for scattering - Bruneton non-linear mapping
+    # d = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s, top_radius)
+    #   = -bottom_radius*mu_s + sqrt(bottom_radius²*(mu_s²-1) + top_radius²)
+    # a = (d - d_min) / (d_max - d_min) where d_min = top-bottom, d_max = H
+    # x_mu_s = max(1 - a/A, 0) / (1 + a) where A is computed for mu_s_min
     
-    x_mu_s = builder.math('DIVIDE', -200, -500, 'x_mu_s', v1=mu_s_range)
-    builder.link(mu_s_shifted.outputs[0], x_mu_s.inputs[0])
+    # Compute d = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s, top_radius)
+    mu_s_sq = builder.math('POWER', -600, -500, 'mu_s²', v1=2.0)
+    builder.link(mu_s_final.outputs[0], mu_s_sq.inputs[0])
     
-    x_mu_s_clamped = builder.math('MINIMUM', 0, -500, 'x_mu_s_max', v1=1.0)
-    builder.link(x_mu_s.outputs[0], x_mu_s_clamped.inputs[0])
+    mu_s_sq_m1 = builder.math('SUBTRACT', -400, -500, 'mu_s²-1', v1=1.0)
+    builder.link(mu_s_sq.outputs[0], mu_s_sq_m1.inputs[0])
     
-    x_mu_s_final = builder.math('MAXIMUM', 200, -500, 'x_mu_s_min', v1=0.0)
-    builder.link(x_mu_s_clamped.outputs[0], x_mu_s_final.inputs[0])
+    # bottom_radius² * (mu_s² - 1) + top_radius²
+    br_sq_term = builder.math('MULTIPLY', -200, -500, 'br²×term', v0=BOTTOM_RADIUS * BOTTOM_RADIUS)
+    builder.link(mu_s_sq_m1.outputs[0], br_sq_term.inputs[1])
     
+    d_discrim = builder.math('ADD', 0, -500, 'd_discrim', v1=TOP_RADIUS * TOP_RADIUS)
+    builder.link(br_sq_term.outputs[0], d_discrim.inputs[0])
+    
+    d_discrim_safe = builder.math('MAXIMUM', 200, -500, 'd_disc_safe', v1=0.0)
+    builder.link(d_discrim.outputs[0], d_discrim_safe.inputs[0])
+    
+    d_sqrt = builder.math('SQRT', 400, -500, 'd_sqrt')
+    builder.link(d_discrim_safe.outputs[0], d_sqrt.inputs[0])
+    
+    # -bottom_radius * mu_s
+    neg_br_mus = builder.math('MULTIPLY', 200, -550, '-br×mu_s', v0=-BOTTOM_RADIUS)
+    builder.link(mu_s_final.outputs[0], neg_br_mus.inputs[1])
+    
+    # d = -br*mu_s + sqrt(discriminant)
+    d_mus = builder.math('ADD', 600, -500, 'd_mus')
+    builder.link(neg_br_mus.outputs[0], d_mus.inputs[0])
+    builder.link(d_sqrt.outputs[0], d_mus.inputs[1])
+    
+    d_mus_safe = builder.math('MAXIMUM', 800, -500, 'd_mus_safe', v1=0.0)
+    builder.link(d_mus.outputs[0], d_mus_safe.inputs[0])
+    
+    # Constants for mapping
+    d_mus_min = TOP_RADIUS - BOTTOM_RADIUS  # = 60 km
+    d_mus_max = H  # = sqrt(top² - bottom²)
+    
+    # Precompute A for mu_s_min
+    D_const = -BOTTOM_RADIUS * MU_S_MIN + math.sqrt(
+        BOTTOM_RADIUS * BOTTOM_RADIUS * (MU_S_MIN * MU_S_MIN - 1.0) + TOP_RADIUS * TOP_RADIUS)
+    A_const = (D_const - d_mus_min) / (d_mus_max - d_mus_min)
+    
+    # a = (d - d_min) / (d_max - d_min)
+    d_mus_shifted = builder.math('SUBTRACT', 1000, -500, 'd-dmin', v1=d_mus_min)
+    builder.link(d_mus_safe.outputs[0], d_mus_shifted.inputs[0])
+    
+    a_val = builder.math('DIVIDE', 1200, -500, 'a', v1=(d_mus_max - d_mus_min))
+    builder.link(d_mus_shifted.outputs[0], a_val.inputs[0])
+    
+    # x_mu_s = max(1 - a/A, 0) / (1 + a)
+    a_over_A = builder.math('DIVIDE', 1400, -500, 'a/A', v1=A_const)
+    builder.link(a_val.outputs[0], a_over_A.inputs[0])
+    
+    one_minus_aA = builder.math('SUBTRACT', 1600, -500, '1-a/A', v0=1.0)
+    builder.link(a_over_A.outputs[0], one_minus_aA.inputs[1])
+    
+    one_minus_aA_safe = builder.math('MAXIMUM', 1800, -500, 'max(1-a/A,0)', v1=0.0)
+    builder.link(one_minus_aA.outputs[0], one_minus_aA_safe.inputs[0])
+    
+    one_plus_a = builder.math('ADD', 1600, -550, '1+a', v0=1.0)
+    builder.link(a_val.outputs[0], one_plus_a.inputs[1])
+    
+    x_mu_s = builder.math('DIVIDE', 2000, -500, 'x_mu_s')
+    builder.link(one_minus_aA_safe.outputs[0], x_mu_s.inputs[0])
+    builder.link(one_plus_a.outputs[0], x_mu_s.inputs[1])
+    
+    # Apply GetTextureCoordFromUnitRange
     mu_s_tex_scale = 1.0 - 1.0 / SCATTERING_TEXTURE_MU_S_SIZE
     mu_s_tex_offset = 0.5 / SCATTERING_TEXTURE_MU_S_SIZE
     
-    u_mu_s_scaled = builder.math('MULTIPLY', 400, -500, 'u_mu_s_sc', v1=mu_s_tex_scale)
-    builder.link(x_mu_s_final.outputs[0], u_mu_s_scaled.inputs[0])
+    u_mu_s_scaled = builder.math('MULTIPLY', 2200, -500, 'u_mu_s_sc', v1=mu_s_tex_scale)
+    builder.link(x_mu_s.outputs[0], u_mu_s_scaled.inputs[0])
     
-    u_mu_s = builder.math('ADD', 600, -500, 'u_mu_s', v1=mu_s_tex_offset)
+    u_mu_s = builder.math('ADD', 2400, -500, 'u_mu_s', v1=mu_s_tex_offset)
     builder.link(u_mu_s_scaled.outputs[0], u_mu_s.inputs[0])
     
     # u_nu (view-sun angle)
