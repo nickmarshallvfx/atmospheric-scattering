@@ -1,6 +1,6 @@
 OpenShadingLanguage 1.00
 # Compiled by oslc 1.14.7.0
-# options: -o C:\Users\space\AppData\Local\Temp\tmpvgvkcv76.oso -IC:\Program Files\Blender Foundation\Blender 5.0\5.0\scripts\addons_core\cycles\shader
+# options: -o C:\Users\space\AppData\Local\Temp\tmppfwuelnp.oso -IC:\Program Files\Blender Foundation\Blender 5.0\5.0\scripts\addons_core\cycles\shader
 shader BrunetonSky
 param	string	transmittance_texture	""		%read{37,1036} %write{2147483647,-1}
 param	string	scattering_texture	""		%read{48,750} %write{2147483647,-1}

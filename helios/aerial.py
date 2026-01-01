@@ -112,6 +112,8 @@ def setup_aerial_aovs(context):
         aov.type = 'COLOR'
         print(f"Helios: Created AOV '{aov_name}' (type={aov.type})")
     
+    # Print all registered AOVs for verification
+    print(f"Helios: View layer AOVs: {[(a.name, a.type) for a in aovs]}")
     return True
 
 
@@ -173,8 +175,7 @@ def add_aerial_to_material(material, context):
     # Create AOV output nodes
     _create_aov_outputs(nodes, links, osl_node)
     
-    # IMPORTANT: OSL nodes are only evaluated if connected to the material output chain.
-    # Connect via a transparent mix to ensure evaluation without affecting appearance.
+    # Connect OSL to material output chain (for visual debug)
     _connect_to_material_output(nodes, links, osl_node)
     
     print(f"Helios: Added aerial perspective to material '{material.name}'")
@@ -359,9 +360,11 @@ def _create_aov_outputs(nodes, links, osl_node):
     except Exception as e:
         print(f"Helios: ERROR creating inscatter link: {e}")
     
-    # Verify connections
+    # Verify connections and AOV names
     print(f"Helios: AOV Trans input links: {[l.from_node.name for l in aov_trans.inputs[0].links]}")
     print(f"Helios: AOV Inscatter input links: {[l.from_node.name for l in aov_inscatter.inputs[0].links]}")
+    print(f"Helios: AOV Trans node aov_name = '{aov_trans.aov_name}'")
+    print(f"Helios: AOV Inscatter node aov_name = '{aov_inscatter.aov_name}'")
 
 
 def remove_aerial_from_material(material):
