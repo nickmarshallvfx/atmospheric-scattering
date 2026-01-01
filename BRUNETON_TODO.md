@@ -100,6 +100,27 @@ Tracking file for features from the Eric Bruneton Atmospheric Scattering model t
 - **Benefit:** Would allow instant parameter updates (density, scale height) like the web demo
 - **Complexity:** High - requires porting numerical integration to GPU compute shaders
 - **Priority:** Nice-to-have after core features complete
+- **Status:** ✅ IMPLEMENTED - GPU precompute v2 runs in ~4-5s preview mode
+
+### Improved LUT Storage & Portability
+- **Description:** Two-tier LUT storage system for better portability and multi-file support
+- **Priority:** Medium - improves user experience for file management
+
+**Tier 1: Per-file cache directories**
+- Change cache path from `<blend_dir>/helios_cache/luts/` to `<blend_dir>/helios_cache/<blend_filename>/luts/`
+- Allows multiple .blend files in the same directory with different atmospheric settings
+- Fast lookup, no extraction needed
+
+**Tier 2: Embedded LUT data in .blend file**
+- Store compressed LUT arrays in scene custom properties (base64 + zlib)
+- On file open: check for external LUTs first, if missing extract from embedded data to temp
+- Makes .blend files fully portable - move/share without losing atmosphere
+- Increases .blend size by ~8-12MB (compressed)
+
+**Fallback chain:**
+1. Look for LUTs at `<blend_dir>/helios_cache/<blend_filename>/luts/`
+2. If not found → extract from embedded data in .blend to temp directory
+3. If no embedded data → trigger automatic rebake
 
 ---
 
