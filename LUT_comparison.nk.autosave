@@ -248,13 +248,12 @@ Merge2 {
 Read {
  inputs 0
  file_type exr
- file C:/Users/space/OneDrive/Desktop/nodeBasedDefaults.exr
+ file c:/Users/space/OneDrive/Desktop/nodeBased_8degElev.exr
  format "960 540 0 0 960 540 1 "
  origset true
- version 1
- name Read9
- xpos 840
- ypos -81
+ name Read11
+ xpos 950
+ ypos -87
 }
 add_layer {ViewLayer_Helios_Sky ViewLayer_Helios_Sky.red ViewLayer_Helios_Sky.green ViewLayer_Helios_Sky.blue ViewLayer_Helios_Sky.alpha}
 Shuffle2 {
@@ -262,8 +261,8 @@ Shuffle2 {
  in1 ViewLayer_Helios_Sky
  fromInput2 {{0} B}
  mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
- name Shuffle5
- xpos 840
+ name Shuffle7
+ xpos 950
  ypos 39
 }
 Read {
@@ -289,21 +288,31 @@ Shuffle2 {
 Read {
  inputs 0
  file_type exr
- file c:/Users/space/OneDrive/Desktop/nodeBased_8degElev.exr
+ file C:/Users/space/OneDrive/Desktop/nodeBasedDefaults.exr
  format "960 540 0 0 960 540 1 "
  origset true
- name Read11
- xpos 950
- ypos -87
+ version 2
+ name Read9
+ xpos 840
+ ypos -81
 }
 Shuffle2 {
  fromInput1 {{0} B}
  in1 ViewLayer_Helios_Sky
  fromInput2 {{0} B}
  mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
- name Shuffle7
- xpos 950
+ name Shuffle5
+ xpos 840
  ypos 39
+}
+EXPTool {
+ mode Stops
+ red 2
+ green 2
+ blue 2
+ name Exposure1
+ xpos 840
+ ypos 63
 }
 Viewer {
  inputs 2
