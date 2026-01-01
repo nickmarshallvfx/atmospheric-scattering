@@ -109,6 +109,12 @@ class HELIOS_OT_precompute_luts(Operator):
             settings.luts_valid = True
             self.report({'INFO'}, f"Atmosphere LUTs saved to {lut_cache_dir}")
             
+            # Populate the change-detection cache so clicking fields doesn't trigger rebake
+            from .. import _last_lut_params, _get_lut_param_hash
+            scene_key = context.scene.name
+            _last_lut_params[scene_key] = _get_lut_param_hash(settings)
+            print(f"Helios: Cached LUT params for scene '{scene_key}'")
+            
             # Rebuild sky shader if it was cleared
             if had_helios_world and world and world.use_nodes:
                 world_module._build_sky_nodes(
