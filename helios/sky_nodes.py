@@ -44,7 +44,7 @@ SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE
 # =============================================================================
 
 SKY_NODE_GROUP_NAME = "Helios_Sky"
-SKY_NODE_VERSION = 2  # Increment this to verify code changes are picked up
+SKY_NODE_VERSION = 3  # Increment this to verify code changes are picked up
 
 
 # =============================================================================
@@ -242,12 +242,9 @@ def create_sky_node_group(lut_dir=None):
     # =========================================================================
     
     transmittance_path = os.path.join(lut_dir, "transmittance.exr")
-    scattering_path = os.path.join(lut_dir, "scattering.exr")
     
     tex_transmittance = builder.image_texture(-1600, 400, 'Transmittance_LUT', transmittance_path)
-    tex_scattering = builder.image_texture(-1600, 200, 'Scattering_LUT', scattering_path)
-    # Second scattering texture for nu interpolation
-    tex_scattering2 = builder.image_texture(-1600, 0, 'Scattering_LUT_2', scattering_path)
+    # Note: Scattering textures created later for proper 4-sample interpolation
     
     # =========================================================================
     # ATMOSPHERE CONSTANTS
@@ -564,23 +561,137 @@ def create_sky_node_group(lut_dir=None):
     uvw1_x = builder.math('DIVIDE', 1000, -700, 'uvw1_x', v1=float(SCATTERING_TEXTURE_NU_SIZE))
     builder.link(tex_x_plus1_mus.outputs[0], uvw1_x.inputs[0])
     
-    # Sample scattering at both nu values
-    scat_uv0 = builder.combine_xyz(1200, -600, 'Scat_UV0')
-    builder.link(uvw0_x.outputs[0], scat_uv0.inputs['X'])
-    builder.link(u_mu_scat_final.outputs[0], scat_uv0.inputs['Y'])
+    # =========================================================================
+    # TILED 3D TEXTURE SAMPLING WITH DEPTH (u_r) INTERPOLATION
+    # =========================================================================
+    # The scattering texture is 3D stored as horizontally tiled 2D:
+    # - Layout: depth slices side by side, total width = slice_width * DEPTH
+    # - Each slice has width = NU_SIZE * MU_S_SIZE = 256
+    # - We need to interpolate across both nu (already computed) and depth (u_r)
     
-    scat_uv1 = builder.combine_xyz(1200, -700, 'Scat_UV1')
-    builder.link(uvw1_x.outputs[0], scat_uv1.inputs['X'])
-    builder.link(u_mu_scat_final.outputs[0], scat_uv1.inputs['Y'])
+    # Apply GetTextureCoordFromUnitRange to u_r
+    r_tex_scale = 1.0 - 1.0 / SCATTERING_TEXTURE_R_SIZE
+    r_tex_offset = 0.5 / SCATTERING_TEXTURE_R_SIZE
     
-    builder.link(scat_uv0.outputs[0], tex_scattering.inputs['Vector'])
-    builder.link(scat_uv1.outputs[0], tex_scattering2.inputs['Vector'])
+    u_r_scaled = builder.math('MULTIPLY', -200, -350, 'u_r_scaled', v1=r_tex_scale)
+    builder.link(scat_u_r_raw.outputs[0], u_r_scaled.inputs[0])
     
-    # Interpolate scattering
-    scat_interp = builder.mix('RGBA', 'MIX', 1600, -650, 'Scattering_Interp')
-    builder.link(lerp_factor.outputs[0], scat_interp.inputs[0])
-    builder.link(tex_scattering.outputs['Color'], scat_interp.inputs[6])  # A
-    builder.link(tex_scattering2.outputs['Color'], scat_interp.inputs[7])  # B
+    u_r = builder.math('ADD', 0, -350, 'u_r', v1=r_tex_offset)
+    builder.link(u_r_scaled.outputs[0], u_r.inputs[0])
+    
+    # Clamp u_r to [0, 1]
+    u_r_clamped = builder.math('MINIMUM', 200, -350, 'u_r_max', v1=1.0)
+    builder.link(u_r.outputs[0], u_r_clamped.inputs[0])
+    
+    u_r_final = builder.math('MAXIMUM', 400, -350, 'u_r_clamp', v1=0.0)
+    builder.link(u_r_clamped.outputs[0], u_r_final.inputs[0])
+    
+    # Compute depth slice indices for interpolation
+    # w_scaled = u_r * (DEPTH - 1)
+    depth_scaled = builder.math('MULTIPLY', 600, -350, 'depth_scaled', 
+                                 v1=float(SCATTERING_TEXTURE_DEPTH - 1))
+    builder.link(u_r_final.outputs[0], depth_scaled.inputs[0])
+    
+    depth_floor = builder.math('FLOOR', 800, -350, 'depth_floor')
+    builder.link(depth_scaled.outputs[0], depth_floor.inputs[0])
+    
+    depth_frac = builder.math('SUBTRACT', 1000, -350, 'depth_frac')
+    builder.link(depth_scaled.outputs[0], depth_frac.inputs[0])
+    builder.link(depth_floor.outputs[0], depth_frac.inputs[1])
+    
+    # depth_floor + 1, clamped to max
+    depth_ceil = builder.math('ADD', 800, -300, 'depth_ceil', v1=1.0)
+    builder.link(depth_floor.outputs[0], depth_ceil.inputs[0])
+    
+    depth_ceil_clamped = builder.math('MINIMUM', 1000, -300, 'depth_ceil_clamp', 
+                                       v1=float(SCATTERING_TEXTURE_DEPTH - 1))
+    builder.link(depth_ceil.outputs[0], depth_ceil_clamped.inputs[0])
+    
+    # Compute X coordinates including depth slice offset
+    # Final X = (depth_slice + uvw_x) / DEPTH
+    # For nu=0 slice:
+    slice0_plus_uvw0 = builder.math('ADD', 1200, -600, 'slice0+uvw0')
+    builder.link(depth_floor.outputs[0], slice0_plus_uvw0.inputs[0])
+    builder.link(uvw0_x.outputs[0], slice0_plus_uvw0.inputs[1])
+    
+    final_x0_slice0 = builder.math('DIVIDE', 1400, -600, 'x0_s0', 
+                                    v1=float(SCATTERING_TEXTURE_DEPTH))
+    builder.link(slice0_plus_uvw0.outputs[0], final_x0_slice0.inputs[0])
+    
+    # For nu=1 slice:
+    slice0_plus_uvw1 = builder.math('ADD', 1200, -650, 'slice0+uvw1')
+    builder.link(depth_floor.outputs[0], slice0_plus_uvw1.inputs[0])
+    builder.link(uvw1_x.outputs[0], slice0_plus_uvw1.inputs[1])
+    
+    final_x1_slice0 = builder.math('DIVIDE', 1400, -650, 'x1_s0', 
+                                    v1=float(SCATTERING_TEXTURE_DEPTH))
+    builder.link(slice0_plus_uvw1.outputs[0], final_x1_slice0.inputs[0])
+    
+    # Second depth slice (ceil)
+    slice1_plus_uvw0 = builder.math('ADD', 1200, -700, 'slice1+uvw0')
+    builder.link(depth_ceil_clamped.outputs[0], slice1_plus_uvw0.inputs[0])
+    builder.link(uvw0_x.outputs[0], slice1_plus_uvw0.inputs[1])
+    
+    final_x0_slice1 = builder.math('DIVIDE', 1400, -700, 'x0_s1', 
+                                    v1=float(SCATTERING_TEXTURE_DEPTH))
+    builder.link(slice1_plus_uvw0.outputs[0], final_x0_slice1.inputs[0])
+    
+    slice1_plus_uvw1 = builder.math('ADD', 1200, -750, 'slice1+uvw1')
+    builder.link(depth_ceil_clamped.outputs[0], slice1_plus_uvw1.inputs[0])
+    builder.link(uvw1_x.outputs[0], slice1_plus_uvw1.inputs[1])
+    
+    final_x1_slice1 = builder.math('DIVIDE', 1400, -750, 'x1_s1', 
+                                    v1=float(SCATTERING_TEXTURE_DEPTH))
+    builder.link(slice1_plus_uvw1.outputs[0], final_x1_slice1.inputs[0])
+    
+    # Create UV coordinates for all 4 samples (2 nu × 2 depth)
+    scat_uv_nu0_d0 = builder.combine_xyz(1600, -600, 'UV_nu0_d0')
+    builder.link(final_x0_slice0.outputs[0], scat_uv_nu0_d0.inputs['X'])
+    builder.link(u_mu_scat_final.outputs[0], scat_uv_nu0_d0.inputs['Y'])
+    
+    scat_uv_nu1_d0 = builder.combine_xyz(1600, -650, 'UV_nu1_d0')
+    builder.link(final_x1_slice0.outputs[0], scat_uv_nu1_d0.inputs['X'])
+    builder.link(u_mu_scat_final.outputs[0], scat_uv_nu1_d0.inputs['Y'])
+    
+    scat_uv_nu0_d1 = builder.combine_xyz(1600, -700, 'UV_nu0_d1')
+    builder.link(final_x0_slice1.outputs[0], scat_uv_nu0_d1.inputs['X'])
+    builder.link(u_mu_scat_final.outputs[0], scat_uv_nu0_d1.inputs['Y'])
+    
+    scat_uv_nu1_d1 = builder.combine_xyz(1600, -750, 'UV_nu1_d1')
+    builder.link(final_x1_slice1.outputs[0], scat_uv_nu1_d1.inputs['X'])
+    builder.link(u_mu_scat_final.outputs[0], scat_uv_nu1_d1.inputs['Y'])
+    
+    # Need 4 texture nodes for bilinear interpolation
+    tex_scat_nu0_d0 = builder.image_texture(1800, -550, 'Scat_nu0_d0', 
+                                             os.path.join(lut_dir, "scattering.exr"))
+    tex_scat_nu1_d0 = builder.image_texture(1800, -650, 'Scat_nu1_d0', 
+                                             os.path.join(lut_dir, "scattering.exr"))
+    tex_scat_nu0_d1 = builder.image_texture(1800, -750, 'Scat_nu0_d1', 
+                                             os.path.join(lut_dir, "scattering.exr"))
+    tex_scat_nu1_d1 = builder.image_texture(1800, -850, 'Scat_nu1_d1', 
+                                             os.path.join(lut_dir, "scattering.exr"))
+    
+    builder.link(scat_uv_nu0_d0.outputs[0], tex_scat_nu0_d0.inputs['Vector'])
+    builder.link(scat_uv_nu1_d0.outputs[0], tex_scat_nu1_d0.inputs['Vector'])
+    builder.link(scat_uv_nu0_d1.outputs[0], tex_scat_nu0_d1.inputs['Vector'])
+    builder.link(scat_uv_nu1_d1.outputs[0], tex_scat_nu1_d1.inputs['Vector'])
+    
+    # Interpolate: first along nu for each depth slice
+    scat_nu_interp_d0 = builder.mix('RGBA', 'MIX', 2100, -600, 'Scat_nu_d0')
+    builder.link(lerp_factor.outputs[0], scat_nu_interp_d0.inputs[0])
+    builder.link(tex_scat_nu0_d0.outputs['Color'], scat_nu_interp_d0.inputs[6])
+    builder.link(tex_scat_nu1_d0.outputs['Color'], scat_nu_interp_d0.inputs[7])
+    
+    scat_nu_interp_d1 = builder.mix('RGBA', 'MIX', 2100, -750, 'Scat_nu_d1')
+    builder.link(lerp_factor.outputs[0], scat_nu_interp_d1.inputs[0])
+    builder.link(tex_scat_nu0_d1.outputs['Color'], scat_nu_interp_d1.inputs[6])
+    builder.link(tex_scat_nu1_d1.outputs['Color'], scat_nu_interp_d1.inputs[7])
+    
+    # Then interpolate along depth
+    scat_interp = builder.mix('RGBA', 'MIX', 2300, -675, 'Scattering_Final')
+    builder.link(depth_frac.outputs[0], scat_interp.inputs[0])
+    builder.link(scat_nu_interp_d0.outputs[2], scat_interp.inputs[6])
+    builder.link(scat_nu_interp_d1.outputs[2], scat_interp.inputs[7])
     
     # =========================================================================
     # PHASE FUNCTIONS
