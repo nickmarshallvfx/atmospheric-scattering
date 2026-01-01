@@ -163,6 +163,10 @@ def add_aerial_to_material(material, context):
     osl_node.filepath = osl_path
     osl_node.update()
     
+    # Debug: print available inputs/outputs
+    print(f"Helios: OSL inputs: {[i.name for i in osl_node.inputs]}")
+    print(f"Helios: OSL outputs: {[o.name for o in osl_node.outputs]}")
+    
     # Set LUT paths and parameters
     _update_aerial_node(osl_node, context, settings)
     
@@ -176,6 +180,7 @@ def add_aerial_to_material(material, context):
 def _update_aerial_node(osl_node, context, settings):
     """Update aerial perspective node parameters."""
     lut_dir = get_lut_cache_dir()
+    print(f"Helios: LUT dir = {lut_dir}")
     
     # Set LUT texture paths
     lut_files = {
@@ -186,8 +191,12 @@ def _update_aerial_node(osl_node, context, settings):
     
     for input_name, filename in lut_files.items():
         filepath = os.path.join(lut_dir, filename)
-        if input_name in osl_node.inputs and os.path.exists(filepath):
+        exists = os.path.exists(filepath)
+        print(f"Helios: {input_name} = {filepath} (exists: {exists})")
+        if input_name in osl_node.inputs and exists:
             osl_node.inputs[input_name].default_value = filepath
+        elif input_name not in osl_node.inputs:
+            print(f"Helios: WARNING - input '{input_name}' not found in OSL node")
     
     # Set atmosphere parameters
     if 'bottom_radius' in osl_node.inputs:
@@ -223,6 +232,7 @@ def _update_aerial_node(osl_node, context, settings):
     
     # Set camera position
     cam_pos = get_camera_position_km(context, settings)
+    print(f"Helios: Camera position (km): {cam_pos}")
     if 'camera_position' in osl_node.inputs:
         osl_node.inputs['camera_position'].default_value = (cam_pos.x, cam_pos.y, cam_pos.z)
     
@@ -233,6 +243,8 @@ def _update_aerial_node(osl_node, context, settings):
     if 'planet_center' in osl_node.inputs:
         # Planet center in Blender coords: Z = -6360 km = -6360000 meters
         osl_node.inputs['planet_center'].default_value = (0, 0, -6360000.0)
+    
+    print(f"Helios: Sun direction: {sun_dir}")
 
 
 def _create_aov_outputs(nodes, links, osl_node):

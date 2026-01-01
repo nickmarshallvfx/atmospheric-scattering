@@ -59,6 +59,28 @@ def get_sun_direction(settings) -> Vector:
     ))
 
 
+def setup_helios_aovs(context):
+    """Set up all Helios AOVs in the view layer."""
+    view_layer = context.view_layer
+    aovs = view_layer.aovs
+    
+    # Define all Helios AOVs
+    helios_aovs = [
+        "helios_sky",
+        "helios_transmittance", 
+        "helios_inscatter",
+    ]
+    
+    for aov_name in helios_aovs:
+        if aov_name not in aovs:
+            aov = aovs.add()
+            aov.name = aov_name
+            aov.type = 'COLOR'
+            print(f"Helios: Created AOV '{aov_name}'")
+    
+    return True
+
+
 def is_helios_world(world) -> bool:
     """Check if a world is a Helios atmosphere world."""
     if world is None:
@@ -112,6 +134,9 @@ def create_atmosphere_world(context, use_preview=True):
     
     world = get_or_create_helios_world(context)
     world.use_nodes = True
+    
+    # Set up AOVs in view layer
+    setup_helios_aovs(context)
     
     nodes = world.node_tree.nodes
     links = world.node_tree.links
@@ -195,6 +220,17 @@ def _build_sky_nodes(nodes, links, settings):
                 break
     
     links.new(background.outputs['Background'], output.inputs['Surface'])
+    
+    # === Create AOV outputs for Sky ===
+    # Sky AOV
+    if 'Sky' in osl_node.outputs:
+        aov_sky = nodes.new('ShaderNodeOutputAOV')
+        aov_sky.name = "Helios_AOV_Sky"
+        aov_sky.label = "Sky AOV"
+        aov_sky.location = (200, -150)
+        aov_sky.aov_name = "helios_sky"
+        links.new(osl_node.outputs['Sky'], aov_sky.inputs['Color'])
+        print("Helios: Created Sky AOV output")
     
     # Set LUT texture paths
     _set_lut_paths(osl_node, lut_dir)
