@@ -421,6 +421,7 @@ shader HeliosAerialPerspective(
     // Rendering options
     int use_combined_textures = 1,
     int enabled = 1,
+    int debug_mode = 0,  // 0=off, 1=solid color test, 2=show distance, 3=show view ray
     
     // Outputs - these become AOVs
     output color AerialTransmittance = color(1.0),
@@ -429,6 +430,13 @@ shader HeliosAerialPerspective(
     if (!enabled) {
         AerialTransmittance = color(1.0);
         AerialInscatter = color(0.0);
+        return;
+    }
+    
+    // Debug mode 1: Output solid colors to verify shader runs
+    if (debug_mode == 1) {
+        AerialTransmittance = color(0.5, 0.7, 0.9);  // Light blue
+        AerialInscatter = color(1.0, 0.5, 0.0);      // Orange
         return;
     }
     

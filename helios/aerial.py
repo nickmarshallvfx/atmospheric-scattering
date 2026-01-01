@@ -248,6 +248,10 @@ def _update_aerial_node(osl_node, context, settings):
         # Planet center in Blender coords: Z = -6360 km = -6360000 meters
         osl_node.inputs['planet_center'].default_value = (0, 0, -6360000.0)
     
+    # Debug mode - set to 1 to verify shader is running
+    if 'debug_mode' in osl_node.inputs:
+        osl_node.inputs['debug_mode'].default_value = 1  # TEMP: Enable debug to verify AOV connection
+    
     print(f"Helios: Sun direction: {sun_dir}")
 
 
