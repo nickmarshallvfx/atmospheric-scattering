@@ -228,7 +228,7 @@ class HeliosAtmosphereSettings(PropertyGroup):
         default='PERSPECTIVE',
     )
     preview_quality: EnumProperty(
-        name="Preview Quality",
+        name="Quality Level",
         description="LUT precomputation quality. Preview is faster but less accurate for multiple scattering",
         items=[
             ('PREVIEW', "Preview (2 orders)", "Fast preview with 2 scattering orders (~10s)"),
