@@ -553,7 +553,12 @@ def update_atmosphere_world(context):
     settings = scene.helios
     nodes = scene.world.node_tree.nodes
     
-    _update_sky_nodes(nodes, settings)
+    # Route to appropriate update function based on mode
+    if settings.aerial_mode == 'NODE':
+        _update_sky_nodes_node_based(nodes, settings, context)
+    else:
+        _update_sky_nodes(nodes, settings)
+    
     _force_viewport_update(context, scene.world)
 
 
@@ -582,11 +587,20 @@ class HELIOS_OT_update_world(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
     
     def execute(self, context):
+        settings = context.scene.helios
+        
         # Force full rebuild
         if context.scene.world and is_helios_world(context.scene.world):
             nodes = context.scene.world.node_tree.nodes
+            links = context.scene.world.node_tree.links
             nodes.clear()
-            _build_sky_nodes(nodes, context.scene.world.node_tree.links, context.scene.helios)
+            
+            # Route to appropriate build function based on mode
+            if settings.aerial_mode == 'NODE':
+                _build_sky_nodes_node_based(nodes, links, settings, context)
+            else:
+                _build_sky_nodes(nodes, links, settings)
+            
             _force_viewport_update(context, context.scene.world)
         else:
             create_atmosphere_world(context, use_preview=True)

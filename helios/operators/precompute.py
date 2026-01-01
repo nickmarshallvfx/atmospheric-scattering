@@ -117,11 +117,15 @@ class HELIOS_OT_precompute_luts(Operator):
             
             # Rebuild sky shader if it was cleared
             if had_helios_world and world and world.use_nodes:
-                world_module._build_sky_nodes(
-                    world.node_tree.nodes,
-                    world.node_tree.links,
-                    settings
-                )
+                nodes = world.node_tree.nodes
+                links = world.node_tree.links
+                
+                # Route to appropriate build function based on mode
+                if settings.aerial_mode == 'NODE':
+                    world_module._build_sky_nodes_node_based(nodes, links, settings, context)
+                else:
+                    world_module._build_sky_nodes(nodes, links, settings)
+                
                 print("Helios: Rebuilt sky shader with fresh LUTs")
             
             # Restore viewport shading modes
@@ -135,11 +139,13 @@ class HELIOS_OT_precompute_luts(Operator):
             settings.luts_valid = False
             # Still try to rebuild shader on error
             if had_helios_world and world and world.use_nodes:
-                world_module._build_sky_nodes(
-                    world.node_tree.nodes,
-                    world.node_tree.links,
-                    settings
-                )
+                nodes = world.node_tree.nodes
+                links = world.node_tree.links
+                
+                if settings.aerial_mode == 'NODE':
+                    world_module._build_sky_nodes_node_based(nodes, links, settings, context)
+                else:
+                    world_module._build_sky_nodes(nodes, links, settings)
             # Restore viewport shading modes on error too
             for space, shading_type in previous_shading_types:
                 space.shading.type = shading_type
