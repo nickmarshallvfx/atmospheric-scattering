@@ -335,23 +335,40 @@ def _create_aov_outputs(nodes, links, osl_node):
     # Create Geometry node for test (matches working test script)
     geom_node = nodes.new('ShaderNodeNewGeometry')
     geom_node.name = "Helios_Geom"
-    geom_node.location = (osl_node.location.x + 100, osl_node.location.y + 100)
+    geom_node.location = (700, 0)  # Position far right to avoid overlap
     
-    # Transmittance AOV - use geometry position for now (works in test)
+    print(f"Helios: Geometry outputs: {[o.name for o in geom_node.outputs]}")
+    
+    # Transmittance AOV
     aov_trans = nodes.new('ShaderNodeOutputAOV')
     aov_trans.name = "Helios_AOV_Transmittance"
-    aov_trans.location = (osl_node.location.x + 300, osl_node.location.y)
+    aov_trans.location = (900, 50)
     aov_trans.aov_name = AERIAL_AOV_TRANSMITTANCE
-    links.new(geom_node.outputs['Position'], aov_trans.inputs['Color'])
-    print(f"Helios: AOV '{AERIAL_AOV_TRANSMITTANCE}' -> Geometry.Position")
     
-    # Inscatter AOV - use geometry normal for now
+    print(f"Helios: AOV Trans inputs: {[(i.name, i.type) for i in aov_trans.inputs]}")
+    
+    # Connect using index 0 (Color input) explicitly
+    try:
+        link = links.new(geom_node.outputs['Position'], aov_trans.inputs[0])
+        print(f"Helios: Created link: {link}, valid={link.is_valid if link else 'None'}")
+    except Exception as e:
+        print(f"Helios: ERROR creating link: {e}")
+    
+    # Inscatter AOV
     aov_inscatter = nodes.new('ShaderNodeOutputAOV')
     aov_inscatter.name = "Helios_AOV_Inscatter"
-    aov_inscatter.location = (osl_node.location.x + 300, osl_node.location.y - 100)
+    aov_inscatter.location = (900, -100)
     aov_inscatter.aov_name = AERIAL_AOV_INSCATTER
-    links.new(geom_node.outputs['Normal'], aov_inscatter.inputs['Color'])
-    print(f"Helios: AOV '{AERIAL_AOV_INSCATTER}' -> Geometry.Normal")
+    
+    try:
+        link = links.new(geom_node.outputs['Normal'], aov_inscatter.inputs[0])
+        print(f"Helios: Created inscatter link: {link}, valid={link.is_valid if link else 'None'}")
+    except Exception as e:
+        print(f"Helios: ERROR creating inscatter link: {e}")
+    
+    # Verify connections
+    print(f"Helios: AOV Trans input links: {[l.from_node.name for l in aov_trans.inputs[0].links]}")
+    print(f"Helios: AOV Inscatter input links: {[l.from_node.name for l in aov_inscatter.inputs[0].links]}")
 
 
 def remove_aerial_from_material(material):
