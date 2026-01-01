@@ -1,0 +1,472 @@
+/**
+ * Helios Aerial Perspective Shader
+ * 
+ * This shader computes atmospheric transmittance and inscatter for scene objects.
+ * It implements GetSkyRadianceToPoint() from Eric Bruneton's atmospheric scattering.
+ * 
+ * Usage: Add this shader to materials to output aerial perspective AOVs.
+ * In Nuke: final = beauty * transmittance + inscatter
+ * 
+ * Copyright (c) 2017 Eric Bruneton (BSD License)
+ * Copyright (c) 2024 MattePaint - OSL Port
+ */
+
+// =============================================================================
+// TEXTURE SIZE CONSTANTS (must match precomputation)
+// =============================================================================
+
+#define TRANSMITTANCE_TEXTURE_WIDTH 256
+#define TRANSMITTANCE_TEXTURE_HEIGHT 64
+
+#define SCATTERING_TEXTURE_R_SIZE 32
+#define SCATTERING_TEXTURE_MU_SIZE 128
+#define SCATTERING_TEXTURE_MU_S_SIZE 32
+#define SCATTERING_TEXTURE_NU_SIZE 8
+
+#define SCATTERING_TEXTURE_WIDTH (SCATTERING_TEXTURE_NU_SIZE * SCATTERING_TEXTURE_MU_S_SIZE)
+#define SCATTERING_TEXTURE_HEIGHT SCATTERING_TEXTURE_MU_SIZE
+#define SCATTERING_TEXTURE_DEPTH SCATTERING_TEXTURE_R_SIZE
+
+#define IRRADIANCE_TEXTURE_WIDTH 64
+#define IRRADIANCE_TEXTURE_HEIGHT 16
+
+
+// =============================================================================
+// UTILITY FUNCTIONS
+// =============================================================================
+
+float ClampCosine(float mu) {
+    return clamp(mu, -1.0, 1.0);
+}
+
+float ClampDistance(float d) {
+    return max(d, 0.0);
+}
+
+float ClampRadius(float r, float bottom_radius, float top_radius) {
+    return clamp(r, bottom_radius, top_radius);
+}
+
+float SafeSqrt(float a) {
+    return sqrt(max(a, 0.0));
+}
+
+float GetTextureCoordFromUnitRange(float x, int texture_size) {
+    return 0.5 / texture_size + x * (1.0 - 1.0 / texture_size);
+}
+
+
+// =============================================================================
+// ATMOSPHERE GEOMETRY
+// =============================================================================
+
+float DistanceToTopAtmosphereBoundary(float r, float mu, float top_radius) {
+    float discriminant = r * r * (mu * mu - 1.0) + top_radius * top_radius;
+    return ClampDistance(-r * mu + SafeSqrt(discriminant));
+}
+
+float DistanceToBottomAtmosphereBoundary(float r, float mu, float bottom_radius) {
+    float discriminant = r * r * (mu * mu - 1.0) + bottom_radius * bottom_radius;
+    return ClampDistance(-r * mu - SafeSqrt(discriminant));
+}
+
+int RayIntersectsGround(float r, float mu, float bottom_radius) {
+    return (mu < 0.0 && r * r * (mu * mu - 1.0) + 
+            bottom_radius * bottom_radius >= 0.0) ? 1 : 0;
+}
+
+
+// =============================================================================
+// PHASE FUNCTIONS
+// =============================================================================
+
+float RayleighPhaseFunction(float nu) {
+    float k = 3.0 / (16.0 * M_PI);
+    return k * (1.0 + nu * nu);
+}
+
+float MiePhaseFunction(float g, float nu) {
+    float k = 3.0 / (8.0 * M_PI) * (1.0 - g * g) / (2.0 + g * g);
+    return k * (1.0 + nu * nu) / pow(1.0 + g * g - 2.0 * g * nu, 1.5);
+}
+
+
+// =============================================================================
+// TRANSMITTANCE TEXTURE LOOKUP
+// =============================================================================
+
+void GetTransmittanceTextureUvFromRMu(
+    float r, float mu,
+    float bottom_radius, float top_radius,
+    output float u, output float v)
+{
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    float d = DistanceToTopAtmosphereBoundary(r, mu, top_radius);
+    float d_min = top_radius - r;
+    float d_max = rho + H;
+    float x_mu = (d - d_min) / (d_max - d_min);
+    float x_r = rho / H;
+    u = GetTextureCoordFromUnitRange(x_mu, TRANSMITTANCE_TEXTURE_WIDTH);
+    v = GetTextureCoordFromUnitRange(x_r, TRANSMITTANCE_TEXTURE_HEIGHT);
+}
+
+color GetTransmittanceToTopAtmosphereBoundary(
+    string transmittance_texture,
+    float r, float mu,
+    float bottom_radius, float top_radius)
+{
+    float u, v;
+    GetTransmittanceTextureUvFromRMu(r, mu, bottom_radius, top_radius, u, v);
+    return texture(transmittance_texture, u, v);
+}
+
+color GetTransmittance(
+    string transmittance_texture,
+    float r, float mu, float d,
+    int ray_r_mu_intersects_ground,
+    float bottom_radius, float top_radius)
+{
+    float r_d = ClampRadius(sqrt(d * d + 2.0 * r * mu * d + r * r), 
+                            bottom_radius, top_radius);
+    float mu_d = ClampCosine((r * mu + d) / r_d);
+
+    if (ray_r_mu_intersects_ground) {
+        color t1 = GetTransmittanceToTopAtmosphereBoundary(
+            transmittance_texture, r_d, -mu_d, bottom_radius, top_radius);
+        color t2 = GetTransmittanceToTopAtmosphereBoundary(
+            transmittance_texture, r, -mu, bottom_radius, top_radius);
+        return min(t1 / max(t2, color(1e-6)), color(1.0));
+    } else {
+        color t1 = GetTransmittanceToTopAtmosphereBoundary(
+            transmittance_texture, r, mu, bottom_radius, top_radius);
+        color t2 = GetTransmittanceToTopAtmosphereBoundary(
+            transmittance_texture, r_d, mu_d, bottom_radius, top_radius);
+        return min(t1 / max(t2, color(1e-6)), color(1.0));
+    }
+}
+
+
+// =============================================================================
+// SCATTERING TEXTURE LOOKUP
+// =============================================================================
+
+void GetScatteringTextureUvwzFromRMuMuSNu(
+    float r, float mu, float mu_s, float nu,
+    int ray_r_mu_intersects_ground,
+    float bottom_radius, float top_radius, float mu_s_min,
+    output float u_nu, output float u_mu_s, output float u_mu, output float u_r)
+{
+    float H = sqrt(top_radius * top_radius - bottom_radius * bottom_radius);
+    float rho = SafeSqrt(r * r - bottom_radius * bottom_radius);
+    u_r = GetTextureCoordFromUnitRange(rho / H, SCATTERING_TEXTURE_R_SIZE);
+
+    float r_mu = r * mu;
+    float discriminant = r_mu * r_mu - r * r + bottom_radius * bottom_radius;
+    
+    if (ray_r_mu_intersects_ground) {
+        float d = -r_mu - SafeSqrt(discriminant);
+        float d_min = r - bottom_radius;
+        float d_max = rho;
+        u_mu = 0.5 - 0.5 * GetTextureCoordFromUnitRange(
+            d_max == d_min ? 0.0 : (d - d_min) / (d_max - d_min), 
+            SCATTERING_TEXTURE_MU_SIZE / 2);
+    } else {
+        float d = -r_mu + SafeSqrt(discriminant + H * H);
+        float d_min = top_radius - r;
+        float d_max = rho + H;
+        u_mu = 0.5 + 0.5 * GetTextureCoordFromUnitRange(
+            (d - d_min) / (d_max - d_min), 
+            SCATTERING_TEXTURE_MU_SIZE / 2);
+    }
+
+    float d = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s, top_radius);
+    float d_min = top_radius - bottom_radius;
+    float d_max = H;
+    float a = (d - d_min) / (d_max - d_min);
+    float D = DistanceToTopAtmosphereBoundary(bottom_radius, mu_s_min, top_radius);
+    float A = (D - d_min) / (d_max - d_min);
+    u_mu_s = GetTextureCoordFromUnitRange(
+        max(1.0 - a / A, 0.0) / (1.0 + a), SCATTERING_TEXTURE_MU_S_SIZE);
+
+    u_nu = (nu + 1.0) / 2.0;
+}
+
+color GetScatteringTiled2D(
+    string scattering_texture,
+    float u, float v, float w)
+{
+    int depth = SCATTERING_TEXTURE_DEPTH;
+    
+    float w_clamped = clamp(w, 0.0, 1.0);
+    float w_scaled = w_clamped * (depth - 1);
+    int slice0 = (int)floor(w_scaled);
+    int slice1 = min(slice0 + 1, depth - 1);
+    float w_frac = w_scaled - slice0;
+    
+    float slice_width = 1.0 / depth;
+    
+    float u0 = (slice0 + u) * slice_width;
+    float u1 = (slice1 + u) * slice_width;
+    
+    color c0 = texture(scattering_texture, u0, v);
+    color c1 = texture(scattering_texture, u1, v);
+    
+    return mix(c0, c1, w_frac);
+}
+
+color GetScattering(
+    string scattering_texture,
+    float r, float mu, float mu_s, float nu,
+    int ray_r_mu_intersects_ground,
+    float bottom_radius, float top_radius, float mu_s_min)
+{
+    float u_nu, u_mu_s, u_mu, u_r;
+    GetScatteringTextureUvwzFromRMuMuSNu(
+        r, mu, mu_s, nu, ray_r_mu_intersects_ground,
+        bottom_radius, top_radius, mu_s_min,
+        u_nu, u_mu_s, u_mu, u_r);
+    
+    float tex_coord_x = u_nu * (SCATTERING_TEXTURE_NU_SIZE - 1);
+    float tex_x = floor(tex_coord_x);
+    float lerp_factor = tex_coord_x - tex_x;
+    
+    float uvw0_x = (tex_x + u_mu_s) / SCATTERING_TEXTURE_NU_SIZE;
+    float uvw1_x = (tex_x + 1.0 + u_mu_s) / SCATTERING_TEXTURE_NU_SIZE;
+    
+    color s0 = GetScatteringTiled2D(scattering_texture, uvw0_x, u_mu, u_r);
+    color s1 = GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r);
+    
+    return s0 * (1.0 - lerp_factor) + s1 * lerp_factor;
+}
+
+
+// =============================================================================
+// COMBINED SCATTERING LOOKUP
+// =============================================================================
+
+color GetExtrapolatedSingleMieScattering(
+    color scattering_rgb, float scattering_a,
+    color rayleigh_scattering, color mie_scattering)
+{
+    if (scattering_rgb[0] <= 0.0) {
+        return color(0.0);
+    }
+    return scattering_rgb * scattering_a / scattering_rgb[0] *
+           (rayleigh_scattering[0] / mie_scattering[0]) *
+           (mie_scattering / rayleigh_scattering);
+}
+
+void GetCombinedScattering(
+    string scattering_texture,
+    string single_mie_scattering_texture,
+    float r, float mu, float mu_s, float nu,
+    int ray_r_mu_intersects_ground,
+    float bottom_radius, float top_radius, float mu_s_min,
+    color rayleigh_scattering, color mie_scattering,
+    int use_combined_textures,
+    output color scattering,
+    output color single_mie_scattering)
+{
+    float u_nu, u_mu_s, u_mu, u_r;
+    GetScatteringTextureUvwzFromRMuMuSNu(
+        r, mu, mu_s, nu, ray_r_mu_intersects_ground,
+        bottom_radius, top_radius, mu_s_min,
+        u_nu, u_mu_s, u_mu, u_r);
+    
+    float tex_coord_x = u_nu * (SCATTERING_TEXTURE_NU_SIZE - 1);
+    float tex_x = floor(tex_coord_x);
+    float lerp_factor = tex_coord_x - tex_x;
+    
+    float uvw0_x = (tex_x + u_mu_s) / SCATTERING_TEXTURE_NU_SIZE;
+    float uvw1_x = (tex_x + 1.0 + u_mu_s) / SCATTERING_TEXTURE_NU_SIZE;
+    
+    if (use_combined_textures) {
+        color s0 = GetScatteringTiled2D(scattering_texture, uvw0_x, u_mu, u_r);
+        color s1 = GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r);
+        color combined = s0 * (1.0 - lerp_factor) + s1 * lerp_factor;
+        
+        scattering = combined;
+        single_mie_scattering = GetExtrapolatedSingleMieScattering(
+            combined, combined[0], rayleigh_scattering, mie_scattering);
+    } else {
+        scattering = GetScatteringTiled2D(scattering_texture, uvw0_x, u_mu, u_r) * (1.0 - lerp_factor) +
+                     GetScatteringTiled2D(scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+        single_mie_scattering = GetScatteringTiled2D(single_mie_scattering_texture, uvw0_x, u_mu, u_r) * (1.0 - lerp_factor) +
+                                GetScatteringTiled2D(single_mie_scattering_texture, uvw1_x, u_mu, u_r) * lerp_factor;
+    }
+}
+
+
+// =============================================================================
+// GET SKY RADIANCE TO POINT - Core aerial perspective function
+// =============================================================================
+
+void GetSkyRadianceToPoint(
+    string transmittance_texture,
+    string scattering_texture,
+    string single_mie_scattering_texture,
+    point camera,
+    point surface_point,
+    float shadow_length,
+    vector sun_direction,
+    float bottom_radius,
+    float top_radius,
+    float mu_s_min,
+    float mie_phase_g,
+    color rayleigh_scattering,
+    color mie_scattering,
+    int use_combined_textures,
+    output color transmittance,
+    output color inscatter)
+{
+    // Compute view ray and distance
+    vector view_ray = normalize(surface_point - camera);
+    float distance_to_point = length(surface_point - camera);
+    
+    // Camera parameters
+    float r = length(camera);
+    float rmu = dot(camera, view_ray);
+    float mu = rmu / r;
+    float mu_s = dot(camera, sun_direction) / r;
+    float nu = dot(view_ray, sun_direction);
+    
+    // For aerial perspective, ray doesn't intersect ground (we hit an object first)
+    int ray_r_mu_intersects_ground = 0;
+    
+    // Get transmittance from camera to point
+    transmittance = GetTransmittance(
+        transmittance_texture,
+        r, mu, distance_to_point,
+        ray_r_mu_intersects_ground,
+        bottom_radius, top_radius);
+    
+    // Get scattering from camera to infinity
+    color scattering_cam, single_mie_cam;
+    GetCombinedScattering(
+        scattering_texture, single_mie_scattering_texture,
+        r, mu, mu_s, nu, ray_r_mu_intersects_ground,
+        bottom_radius, top_radius, mu_s_min,
+        rayleigh_scattering, mie_scattering,
+        use_combined_textures,
+        scattering_cam, single_mie_cam);
+    
+    // Get scattering from point to infinity
+    float r_p = length(surface_point);
+    float mu_p = dot(surface_point, view_ray) / r_p;
+    float mu_s_p = dot(surface_point, sun_direction) / r_p;
+    
+    color scattering_point, single_mie_point;
+    GetCombinedScattering(
+        scattering_texture, single_mie_scattering_texture,
+        r_p, mu_p, mu_s_p, nu, ray_r_mu_intersects_ground,
+        bottom_radius, top_radius, mu_s_min,
+        rayleigh_scattering, mie_scattering,
+        use_combined_textures,
+        scattering_point, single_mie_point);
+    
+    // Inscatter = scattering from camera to point
+    // = scattering(camera→∞) - transmittance(camera→point) × scattering(point→∞)
+    color rayleigh_inscatter = scattering_cam - transmittance * scattering_point;
+    color mie_inscatter = single_mie_cam - transmittance * single_mie_point;
+    
+    // Apply phase functions
+    inscatter = rayleigh_inscatter * RayleighPhaseFunction(nu) + 
+                mie_inscatter * MiePhaseFunction(mie_phase_g, nu);
+    
+    // Handle shadow_length for light shafts (future implementation)
+    if (shadow_length > 0.0) {
+        // TODO: Implement shadow handling for volumetric light rays
+        // This would reduce inscatter in shadowed regions
+    }
+}
+
+
+// =============================================================================
+// MAIN SHADER
+// =============================================================================
+
+shader HeliosAerialPerspective(
+    // LUT Textures (file paths to precomputed EXR files)
+    string transmittance_texture = "",
+    string scattering_texture = "",
+    string single_mie_scattering_texture = "",
+    
+    // Atmosphere parameters (must match precomputation)
+    float bottom_radius = 6360.0,          // km (Earth radius)
+    float top_radius = 6420.0,             // km (atmosphere top)
+    float mu_s_min = -0.2,                 // cos(102 degrees)
+    
+    // Scattering coefficients (RGB for wavelengths)
+    color rayleigh_scattering = color(0.0058, 0.0135, 0.0331),
+    color mie_scattering = color(0.004),
+    float mie_phase_g = 0.8,
+    
+    // Sun parameters
+    vector sun_direction = vector(0, 0, 1),
+    float sun_intensity = 1.0,
+    
+    // Camera position (in km, relative to planet center)
+    // This should be set by the addon based on Blender camera
+    point camera_position = point(0, 0, 6360.5),
+    
+    // Scene scale: converts Blender units to km
+    // Default: 1 Blender unit = 1 meter = 0.001 km
+    float scene_scale = 0.001,
+    
+    // Planet center in Blender world coordinates
+    // Default: planet center is at world origin, surface at Z=0
+    point planet_center = point(0, 0, -6360.0),
+    
+    // Rendering options
+    int use_combined_textures = 1,
+    int enabled = 1,
+    
+    // Outputs - these become AOVs
+    output color AerialTransmittance = color(1.0),
+    output color AerialInscatter = color(0.0))
+{
+    if (!enabled) {
+        AerialTransmittance = color(1.0);
+        AerialInscatter = color(0.0);
+        return;
+    }
+    
+    // Get the surface point in world coordinates
+    point P_world = P;
+    
+    // Convert surface point to atmosphere coordinates (km, relative to planet center)
+    point surface_point_km = (P_world - planet_center) * scene_scale;
+    
+    // Camera is already in atmosphere coordinates (set by addon)
+    point camera_km = camera_position;
+    
+    // Compute aerial perspective
+    color transmittance_out;
+    color inscatter_out;
+    
+    GetSkyRadianceToPoint(
+        transmittance_texture,
+        scattering_texture,
+        single_mie_scattering_texture,
+        camera_km,
+        surface_point_km,
+        0.0,  // shadow_length (future: compute from shadow map)
+        normalize(sun_direction),
+        bottom_radius,
+        top_radius,
+        mu_s_min,
+        mie_phase_g,
+        rayleigh_scattering,
+        mie_scattering,
+        use_combined_textures,
+        transmittance_out,
+        inscatter_out);
+    
+    // Apply sun intensity to inscatter
+    inscatter_out = inscatter_out * sun_intensity;
+    
+    // Output AOVs
+    AerialTransmittance = transmittance_out;
+    AerialInscatter = inscatter_out;
+}
