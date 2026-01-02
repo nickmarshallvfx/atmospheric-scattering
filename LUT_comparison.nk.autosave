@@ -15,7 +15,7 @@ define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
                     <page id="Viewer.1"/>
                 </dock>
                 <split size="449"/>
-                <dock id="" activePageId="DAG.1" focus="true">
+                <dock id="" activePageId="DAG.1">
                     <page id="DAG.1"/>
                     <page id="Curve Editor.1"/>
                     <page id="DopeSheet.1"/>
@@ -312,10 +312,31 @@ Shuffle2 {
 Read {
  inputs 0
  file_type exr
+ file c:/Users/space/OneDrive/Desktop/OSL_8degElev.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ raw true
+ name Read13
+ xpos 1060
+ ypos -278
+}
+set N3a458c00 [stack 0]
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Environment
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Environment.red 0 0 rgba.red 0 0 ViewLayer_Environment.green 0 1 rgba.green 0 1 ViewLayer_Environment.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle7
+ xpos 1021
+ ypos -124
+}
+Read {
+ inputs 0
+ file_type exr
  file c:/Users/space/OneDrive/Desktop/nodeBased_8degElev.exr
  format "960 540 0 0 960 540 1 "
  origset true
- version 6
+ version 7
  raw true
  name Read12
  xpos 840
@@ -328,29 +349,18 @@ Shuffle2 {
  fromInput2 {{0} B}
  mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
  name Shuffle12
- xpos 778
+ xpos 789
  ypos -129
 }
-Read {
- inputs 0
- file_type exr
- file c:/Users/space/OneDrive/Desktop/OSL_8degElev.exr
- format "960 540 0 0 960 540 1 "
- origset true
- raw true
- name Read13
- xpos 1060
- ypos -278
-}
-set N3a458c00 [stack 0]
+push $N3a458c00
 Shuffle2 {
  fromInput1 {{0} B}
  in1 ViewLayer_Combined
  fromInput2 {{0} B}
  mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
  name Shuffle10
- xpos 1136
- ypos -135
+ xpos 1130
+ ypos -129
 }
 push $N3a458400
 Shuffle2 {
@@ -359,21 +369,9 @@ Shuffle2 {
  fromInput2 {{0} B}
  mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
  name Shuffle11
- xpos 882
+ xpos 897
  ypos -129
 }
-push $N3a458c00
-Shuffle2 {
- fromInput1 {{0} B}
- in1 ViewLayer_Environment
- fromInput2 {{0} B}
- mappings "4 ViewLayer_Environment.red 0 0 rgba.red 0 0 ViewLayer_Environment.green 0 1 rgba.green 0 1 ViewLayer_Environment.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
- name Shuffle7
- xpos 1026
- ypos -135
-}
-set N39fe4000 [stack 0]
-push $N39fe4000
 Viewer {
  inputs 2
  frame 10
@@ -383,7 +381,6 @@ Viewer {
    }
  monitorOutOutputTransform rec709
  name Viewer1
- selected true
  xpos -40
  ypos -9
 }

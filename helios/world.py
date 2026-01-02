@@ -472,6 +472,16 @@ def _update_sky_nodes_node_based(nodes, settings, context):
     
     if 'Exposure' in group_node.inputs:
         group_node.inputs['Exposure'].default_value = settings.exposure
+    
+    # Sun disk parameters (use hardcoded physical values)
+    if 'Sun_Angular_Radius' in group_node.inputs:
+        group_node.inputs['Sun_Angular_Radius'].default_value = 0.004675  # radians
+    
+    if 'Solar_Irradiance' in group_node.inputs:
+        group_node.inputs['Solar_Irradiance'].default_value = (1.474, 1.8504, 1.91198, 1.0)
+    
+    if 'Add_Sun_Disk' in group_node.inputs:
+        group_node.inputs['Add_Sun_Disk'].default_value = 1.0
 
 
 def _force_viewport_update(context, world):

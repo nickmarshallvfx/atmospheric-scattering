@@ -44,7 +44,7 @@ SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE
 # =============================================================================
 
 SKY_NODE_GROUP_NAME = "Helios_Sky"
-SKY_NODE_VERSION = 7  # Increment this to verify code changes are picked up
+SKY_NODE_VERSION = 8  # Increment this to verify code changes are picked up
 
 
 # =============================================================================
@@ -801,10 +801,14 @@ def create_sky_node_group(lut_dir=None):
     # Add sun disk if ray points at sun: cos(view, sun) > cos(sun_angular_radius)
     # Sun radiance = solar_irradiance / (PI * sun_angular_radius^2)
     
+    # Normalize sun direction for dot product
+    sun_dir_norm = builder.vec_math('NORMALIZE', 3500, -200, 'Sun_Dir_Norm')
+    builder.link(group_input.outputs['Sun_Direction'], sun_dir_norm.inputs[0])
+    
     # cos(angle) = dot(view_direction, sun_direction)
-    cos_sun_angle = builder.vec_math('DOT_PRODUCT', 3600, -200, 'Cos_Sun_Angle')
+    cos_sun_angle = builder.vec_math('DOT_PRODUCT', 3700, -200, 'Cos_Sun_Angle')
     builder.link(group_input.outputs['View_Direction'], cos_sun_angle.inputs[0])
-    builder.link(group_input.outputs['Sun_Direction'], cos_sun_angle.inputs[1])
+    builder.link(sun_dir_norm.outputs[0], cos_sun_angle.inputs[1])
     
     # cos(sun_angular_radius)
     cos_sun_radius = builder.math('COSINE', 3600, -100, 'Cos_Sun_Radius')
