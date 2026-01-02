@@ -44,7 +44,7 @@ SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE
 # =============================================================================
 
 SKY_NODE_GROUP_NAME = "Helios_Sky"
-SKY_NODE_VERSION = 8  # Increment this to verify code changes are picked up
+SKY_NODE_VERSION = 9  # Increment this to verify code changes are picked up
 
 
 # =============================================================================
@@ -423,10 +423,14 @@ def create_sky_node_group(lut_dir=None):
     trans_v = builder.math('ADD', 2200, 350, 'trans_v', v1=v_offset)
     builder.link(trans_v_scaled.outputs[0], trans_v.inputs[0])
     
+    # Flip V coordinate for transmittance (same convention issue as scattering)
+    trans_v_flipped = builder.math('SUBTRACT', 2300, 350, 'trans_v_flip', v0=1.0)
+    builder.link(trans_v.outputs[0], trans_v_flipped.inputs[1])
+    
     # Combine UV and sample transmittance
     trans_uv = builder.combine_xyz(2400, 300, 'Trans_UV')
     builder.link(trans_u.outputs[0], trans_uv.inputs['X'])
-    builder.link(trans_v.outputs[0], trans_uv.inputs['Y'])
+    builder.link(trans_v_flipped.outputs[0], trans_uv.inputs['Y'])
     
     builder.link(trans_uv.outputs[0], tex_transmittance.inputs['Vector'])
     
