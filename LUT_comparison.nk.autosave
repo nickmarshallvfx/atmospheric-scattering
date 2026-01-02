@@ -352,7 +352,7 @@ Read {
  file c:/Users/space/OneDrive/Desktop/nodeBased_8degElev.exr
  format "960 540 0 0 960 540 1 "
  origset true
- version 8
+ version 9
  raw true
  name Read12
  xpos 840
@@ -388,7 +388,6 @@ Viewer {
  inputs 2
  frame 10
  frame_range 1-100
- gain 0.35
  colour_sample_bbox {1.125 0.125 1.15625 0.15625}
  samplepoints {{1.125 0.125}
    }

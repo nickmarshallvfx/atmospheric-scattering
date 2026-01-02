@@ -41,10 +41,11 @@ SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE
 
 
 # =============================================================================
-# NODE GROUP NAME
+# NODE GROUP NAME AND VERSION
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
+AERIAL_NODE_VERSION = 2  # Increment to force node group recreation
 
 
 # =============================================================================
@@ -686,10 +687,14 @@ def create_aerial_perspective_node_group(lut_dir=None):
         base_x=-400, base_y=400
     )
     
+    # Flip V coordinate (Blender Image Texture vs OSL texture() convention)
+    trans_v_flipped = builder.math('SUBTRACT', 1500, 450, 'trans_v_flip', v0=1.0)
+    builder.link(v_socket, trans_v_flipped.inputs[1])
+    
     # Combine UV for texture lookup
     trans_uv = builder.combine_xyz(1600, 400, 'Trans_UV')
     builder.link(u_socket, trans_uv.inputs['X'])
-    builder.link(v_socket, trans_uv.inputs['Y'])
+    builder.link(trans_v_flipped.outputs[0], trans_uv.inputs['Y'])
     
     builder.link(trans_uv.outputs[0], tex_transmittance.inputs['Vector'])
     
@@ -744,10 +749,14 @@ def create_aerial_perspective_node_group(lut_dir=None):
         base_x=200, base_y=600
     )
     
+    # Flip V coordinate for camera scattering (Blender Image Texture vs OSL convention)
+    scat_v_cam_flipped = builder.math('SUBTRACT', 2700, 650, 'scat_v_cam_flip', v0=1.0)
+    builder.link(scat_v_cam, scat_v_cam_flipped.inputs[1])
+    
     # Combine UV for camera scattering lookup
     scat_uv_cam = builder.combine_xyz(2800, 600, 'Scat_UV_Cam')
     builder.link(scat_u_cam, scat_uv_cam.inputs['X'])
-    builder.link(scat_v_cam, scat_uv_cam.inputs['Y'])
+    builder.link(scat_v_cam_flipped.outputs[0], scat_uv_cam.inputs['Y'])
     
     # Sample scattering at camera
     tex_scat_cam = builder.image_texture(3000, 600, 'Scattering_Cam')
@@ -789,10 +798,14 @@ def create_aerial_perspective_node_group(lut_dir=None):
         base_x=400, base_y=-600
     )
     
+    # Flip V coordinate for point scattering (Blender Image Texture vs OSL convention)
+    scat_v_pt_flipped = builder.math('SUBTRACT', 2700, -550, 'scat_v_pt_flip', v0=1.0)
+    builder.link(scat_v_pt, scat_v_pt_flipped.inputs[1])
+    
     # Combine UV for point scattering lookup
     scat_uv_pt = builder.combine_xyz(2800, -600, 'Scat_UV_Point')
     builder.link(scat_u_pt, scat_uv_pt.inputs['X'])
-    builder.link(scat_v_pt, scat_uv_pt.inputs['Y'])
+    builder.link(scat_v_pt_flipped.outputs[0], scat_uv_pt.inputs['Y'])
     
     # Sample scattering at point
     tex_scat_pt = builder.image_texture(3000, -600, 'Scattering_Point')
@@ -856,14 +869,28 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # Output computed inscatter
     builder.link(inscatter_final.outputs['Color'], group_output.inputs['Inscatter'])
     
-    print(f"Helios: Created node group '{AERIAL_NODE_GROUP_NAME}' with full GetSkyRadianceToPoint")
+    # Store version for future checks
+    group['helios_version'] = AERIAL_NODE_VERSION
+    
+    print(f"Helios: Created node group '{AERIAL_NODE_GROUP_NAME}' v{AERIAL_NODE_VERSION} with full GetSkyRadianceToPoint")
     return group
 
 
 def get_or_create_aerial_node_group(lut_dir=None):
-    """Get existing node group or create a new one."""
+    """Get existing node group or create a new one.
+    
+    Always recreates if version has changed.
+    """
+    # Always recreate to ensure latest version
     if AERIAL_NODE_GROUP_NAME in bpy.data.node_groups:
-        return bpy.data.node_groups[AERIAL_NODE_GROUP_NAME]
+        existing = bpy.data.node_groups[AERIAL_NODE_GROUP_NAME]
+        # Check version - recreate if outdated
+        existing_version = existing.get('helios_version', 0)
+        if existing_version < AERIAL_NODE_VERSION:
+            print(f"Helios: Aerial node group version {existing_version} < {AERIAL_NODE_VERSION}, recreating")
+            bpy.data.node_groups.remove(existing)
+        else:
+            return existing
     return create_aerial_perspective_node_group(lut_dir)
 
 
