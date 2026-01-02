@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 6  # Complete rewrite based on reference analysis
+AERIAL_NODE_VERSION = 7  # Fix transmittance: T(cam→pt) = T(cam→top) / T(pt→top)
 
 
 # =============================================================================
@@ -114,6 +114,77 @@ class NodeBuilder:
     
     def link(self, from_socket, to_socket):
         self.links.new(from_socket, to_socket)
+
+
+# =============================================================================
+# TRANSMITTANCE UV HELPER
+# =============================================================================
+
+def create_transmittance_uv(builder, r_socket, mu_socket, base_x, base_y, suffix=""):
+    """
+    Create transmittance texture UV coordinates.
+    
+    Reference: GetTransmittanceTextureUvFromRMu
+    
+    Returns: (uv_combine_node, u_socket, v_socket)
+    """
+    # r² for rho calculation
+    r_sq = builder.math('MULTIPLY', base_x, base_y, f't_r²{suffix}')
+    builder.link(r_socket, r_sq.inputs[0])
+    builder.link(r_socket, r_sq.inputs[1])
+    
+    # rho = sqrt(r² - bottom²)
+    rho_sq = builder.math('SUBTRACT', base_x + 150, base_y, f't_rho²{suffix}', 
+                          v1=BOTTOM_RADIUS * BOTTOM_RADIUS)
+    builder.link(r_sq.outputs[0], rho_sq.inputs[0])
+    
+    rho_sq_safe = builder.math('MAXIMUM', base_x + 300, base_y, f't_rho²_safe{suffix}', v1=0.0)
+    builder.link(rho_sq.outputs[0], rho_sq_safe.inputs[0])
+    
+    rho = builder.math('SQRT', base_x + 450, base_y, f't_rho{suffix}')
+    builder.link(rho_sq_safe.outputs[0], rho.inputs[0])
+    
+    # x_r = rho / H
+    x_r = builder.math('DIVIDE', base_x + 600, base_y, f't_x_r{suffix}', v1=H)
+    builder.link(rho.outputs[0], x_r.inputs[0])
+    
+    # Apply texture coord transform for V
+    v_scale = 1.0 - 1.0 / TRANSMITTANCE_TEXTURE_HEIGHT
+    v_offset = 0.5 / TRANSMITTANCE_TEXTURE_HEIGHT
+    
+    v_scaled = builder.math('MULTIPLY', base_x + 750, base_y, f't_v_sc{suffix}', v1=v_scale)
+    builder.link(x_r.outputs[0], v_scaled.inputs[0])
+    
+    v_coord = builder.math('ADD', base_x + 900, base_y, f't_v{suffix}', v1=v_offset)
+    builder.link(v_scaled.outputs[0], v_coord.inputs[0])
+    
+    # Flip V for Blender texture convention
+    v_flip = builder.math('SUBTRACT', base_x + 1050, base_y, f't_v_flip{suffix}', v0=1.0)
+    builder.link(v_coord.outputs[0], v_flip.inputs[1])
+    
+    # x_mu = (mu + 1) / 2
+    mu_plus1 = builder.math('ADD', base_x, base_y - 50, f't_mu+1{suffix}', v0=1.0)
+    builder.link(mu_socket, mu_plus1.inputs[1])
+    
+    x_mu = builder.math('MULTIPLY', base_x + 150, base_y - 50, f't_x_mu{suffix}', v1=0.5)
+    builder.link(mu_plus1.outputs[0], x_mu.inputs[0])
+    
+    # Apply texture coord transform for U
+    u_scale = 1.0 - 1.0 / TRANSMITTANCE_TEXTURE_WIDTH
+    u_offset = 0.5 / TRANSMITTANCE_TEXTURE_WIDTH
+    
+    u_scaled = builder.math('MULTIPLY', base_x + 300, base_y - 50, f't_u_sc{suffix}', v1=u_scale)
+    builder.link(x_mu.outputs[0], u_scaled.inputs[0])
+    
+    u_coord = builder.math('ADD', base_x + 450, base_y - 50, f't_u{suffix}', v1=u_offset)
+    builder.link(u_scaled.outputs[0], u_coord.inputs[0])
+    
+    # Combine UV
+    uv = builder.combine_xyz(base_x + 1200, base_y - 25, f'Trans_UV{suffix}')
+    builder.link(u_coord.outputs[0], uv.inputs['X'])
+    builder.link(v_flip.outputs[0], uv.inputs['Y'])
+    
+    return uv.outputs[0]
 
 
 # =============================================================================
@@ -387,8 +458,6 @@ def create_aerial_perspective_node_group(lut_dir=None):
     transmittance_path = os.path.join(lut_dir, "transmittance.exr")
     scattering_path = os.path.join(lut_dir, "scattering.exr")
     
-    tex_transmittance = builder.image_texture(-2200, 500, 'Transmittance_LUT', transmittance_path)
-    
     # =========================================================================
     # COORDINATE TRANSFORMS - camera and point relative to earth center
     # =========================================================================
@@ -565,67 +634,75 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(mu_s_p_clamped.outputs[0], mu_s_p_final.inputs[0])
     
     # =========================================================================
-    # TRANSMITTANCE UV
+    # TRANSMITTANCE - Two lookups, then divide
+    # Reference: T(cam→pt) = T(cam→top) / T(pt→top)
     # =========================================================================
     
-    # rho = sqrt(r² - bottom²)
-    trans_rho_sq = builder.math('SUBTRACT', -400, 500, 'trans_rho²', v1=BOTTOM_RADIUS * BOTTOM_RADIUS)
-    builder.link(r_sq.outputs[0], trans_rho_sq.inputs[0])
+    # Create transmittance UV for camera position (r, mu)
+    trans_uv_cam = create_transmittance_uv(
+        builder, r.outputs[0], mu_final.outputs[0], 
+        -400, 600, "_cam"
+    )
     
-    trans_rho_sq_safe = builder.math('MAXIMUM', -200, 500, 'trans_rho²_safe', v1=0.0)
-    builder.link(trans_rho_sq.outputs[0], trans_rho_sq_safe.inputs[0])
+    # Create transmittance UV for point position (r_p, mu_p)
+    trans_uv_pt = create_transmittance_uv(
+        builder, r_p.outputs[0], mu_p_final.outputs[0],
+        -400, 400, "_pt"
+    )
     
-    trans_rho = builder.math('SQRT', 0, 500, 'trans_rho')
-    builder.link(trans_rho_sq_safe.outputs[0], trans_rho.inputs[0])
+    # Sample transmittance at camera
+    tex_trans_cam = builder.image_texture(1000, 600, 'Trans_Cam', transmittance_path)
+    builder.link(trans_uv_cam, tex_trans_cam.inputs['Vector'])
     
-    trans_x_r = builder.math('DIVIDE', 200, 500, 'trans_x_r', v1=H)
-    builder.link(trans_rho.outputs[0], trans_x_r.inputs[0])
+    # Sample transmittance at point
+    tex_trans_pt = builder.image_texture(1000, 400, 'Trans_Pt', transmittance_path)
+    builder.link(trans_uv_pt, tex_trans_pt.inputs['Vector'])
     
-    # x_mu for transmittance (distance to top)
-    trans_d_min = builder.math('SUBTRACT', 200, 400, 'trans_d_min', v0=TOP_RADIUS)
-    builder.link(r.outputs[0], trans_d_min.inputs[1])
+    # T(cam→pt) = T_cam / T_pt (per-channel division)
+    # Add small epsilon to prevent division by zero
+    trans_pt_safe_r = builder.math('MAXIMUM', 1200, 450, 'T_pt_safe_r', v1=0.0001)
+    trans_pt_safe_g = builder.math('MAXIMUM', 1200, 400, 'T_pt_safe_g', v1=0.0001)
+    trans_pt_safe_b = builder.math('MAXIMUM', 1200, 350, 'T_pt_safe_b', v1=0.0001)
     
-    trans_d_max = builder.math('ADD', 200, 350, 'trans_d_max', v1=H)
-    builder.link(trans_rho.outputs[0], trans_d_max.inputs[0])
+    sep_trans_pt = builder.nodes.new('ShaderNodeSeparateColor')
+    sep_trans_pt.location = (1100, 400)
+    sep_trans_pt.name = 'Sep_T_pt'
+    builder.link(tex_trans_pt.outputs['Color'], sep_trans_pt.inputs['Color'])
     
-    trans_d_minus_dmin = builder.math('SUBTRACT', 400, 450, 'trans_d-dmin')
-    builder.link(cam_dot_view.outputs['Value'], trans_d_minus_dmin.inputs[0])  # Will compute properly
-    builder.link(trans_d_min.outputs[0], trans_d_minus_dmin.inputs[1])
+    builder.link(sep_trans_pt.outputs['Red'], trans_pt_safe_r.inputs[0])
+    builder.link(sep_trans_pt.outputs['Green'], trans_pt_safe_g.inputs[0])
+    builder.link(sep_trans_pt.outputs['Blue'], trans_pt_safe_b.inputs[0])
     
-    # Use simplified mapping for transmittance
-    trans_v_scale = 1.0 - 1.0 / TRANSMITTANCE_TEXTURE_HEIGHT
-    trans_v_offset = 0.5 / TRANSMITTANCE_TEXTURE_HEIGHT
+    sep_trans_cam = builder.nodes.new('ShaderNodeSeparateColor')
+    sep_trans_cam.location = (1100, 600)
+    sep_trans_cam.name = 'Sep_T_cam'
+    builder.link(tex_trans_cam.outputs['Color'], sep_trans_cam.inputs['Color'])
     
-    trans_v_scaled = builder.math('MULTIPLY', 400, 500, 'trans_v_sc', v1=trans_v_scale)
-    builder.link(trans_x_r.outputs[0], trans_v_scaled.inputs[0])
+    trans_ratio_r = builder.math('DIVIDE', 1400, 450, 'T_ratio_r')
+    builder.link(sep_trans_cam.outputs['Red'], trans_ratio_r.inputs[0])
+    builder.link(trans_pt_safe_r.outputs[0], trans_ratio_r.inputs[1])
     
-    trans_v = builder.math('ADD', 600, 500, 'trans_v', v1=trans_v_offset)
-    builder.link(trans_v_scaled.outputs[0], trans_v.inputs[0])
+    trans_ratio_g = builder.math('DIVIDE', 1400, 400, 'T_ratio_g')
+    builder.link(sep_trans_cam.outputs['Green'], trans_ratio_g.inputs[0])
+    builder.link(trans_pt_safe_g.outputs[0], trans_ratio_g.inputs[1])
     
-    trans_v_flip = builder.math('SUBTRACT', 800, 500, 'trans_v_flip', v0=1.0)
-    builder.link(trans_v.outputs[0], trans_v_flip.inputs[1])
+    trans_ratio_b = builder.math('DIVIDE', 1400, 350, 'T_ratio_b')
+    builder.link(sep_trans_cam.outputs['Blue'], trans_ratio_b.inputs[0])
+    builder.link(trans_pt_safe_b.outputs[0], trans_ratio_b.inputs[1])
     
-    # u based on mu
-    mu_plus1 = builder.math('ADD', 400, 550, 'mu+1', v0=1.0)
-    builder.link(mu_final.outputs[0], mu_plus1.inputs[1])
+    # Clamp to [0, 1]
+    trans_r_clamp = builder.math('MINIMUM', 1600, 450, 'T_r_clamp', v1=1.0)
+    builder.link(trans_ratio_r.outputs[0], trans_r_clamp.inputs[0])
+    trans_g_clamp = builder.math('MINIMUM', 1600, 400, 'T_g_clamp', v1=1.0)
+    builder.link(trans_ratio_g.outputs[0], trans_g_clamp.inputs[0])
+    trans_b_clamp = builder.math('MINIMUM', 1600, 350, 'T_b_clamp', v1=1.0)
+    builder.link(trans_ratio_b.outputs[0], trans_b_clamp.inputs[0])
     
-    trans_x_mu = builder.math('MULTIPLY', 600, 550, 'trans_x_mu', v1=0.5)
-    builder.link(mu_plus1.outputs[0], trans_x_mu.inputs[0])
-    
-    trans_u_scale = 1.0 - 1.0 / TRANSMITTANCE_TEXTURE_WIDTH
-    trans_u_offset = 0.5 / TRANSMITTANCE_TEXTURE_WIDTH
-    
-    trans_u_scaled = builder.math('MULTIPLY', 800, 550, 'trans_u_sc', v1=trans_u_scale)
-    builder.link(trans_x_mu.outputs[0], trans_u_scaled.inputs[0])
-    
-    trans_u = builder.math('ADD', 1000, 550, 'trans_u', v1=trans_u_offset)
-    builder.link(trans_u_scaled.outputs[0], trans_u.inputs[0])
-    
-    trans_uv = builder.combine_xyz(1200, 525, 'Trans_UV')
-    builder.link(trans_u.outputs[0], trans_uv.inputs['X'])
-    builder.link(trans_v_flip.outputs[0], trans_uv.inputs['Y'])
-    
-    builder.link(trans_uv.outputs[0], tex_transmittance.inputs['Vector'])
+    # Combine back to color
+    transmittance_final = builder.combine_xyz(1800, 400, 'Transmittance_Final')
+    builder.link(trans_r_clamp.outputs[0], transmittance_final.inputs['X'])
+    builder.link(trans_g_clamp.outputs[0], transmittance_final.inputs['Y'])
+    builder.link(trans_b_clamp.outputs[0], transmittance_final.inputs['Z'])
     
     # =========================================================================
     # SCATTERING LOOKUPS - Camera and Point
@@ -730,7 +807,7 @@ def create_aerial_perspective_node_group(lut_dir=None):
     
     # transmittance × S_point
     t_times_scat = builder.vec_math('MULTIPLY', 4850, -200, 'T×S_pt')
-    builder.link(tex_transmittance.outputs['Color'], t_times_scat.inputs[0])
+    builder.link(transmittance_final.outputs[0], t_times_scat.inputs[0])
     builder.link(tex_scat_pt.outputs['Color'], t_times_scat.inputs[1])
     
     # S_cam - T × S_point
@@ -767,7 +844,7 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # OUTPUTS
     # =========================================================================
     
-    builder.link(tex_transmittance.outputs['Color'], group_output.inputs['Transmittance'])
+    builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
     builder.link(inscatter_phased.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
