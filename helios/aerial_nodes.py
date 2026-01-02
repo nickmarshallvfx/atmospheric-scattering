@@ -45,7 +45,7 @@ SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 3  # Increment to force node group recreation
+AERIAL_NODE_VERSION = 4  # Increment to force node group recreation
 
 
 # =============================================================================
@@ -645,9 +645,19 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # CAMERA PARAMETERS (r, mu, mu_s, nu)
     # =========================================================================
     
-    # r = length(camera)
-    r = builder.vec_math('LENGTH', -800, 0, 'r')
-    builder.link(camera_km.outputs[0], r.inputs[0])
+    # r = length(camera), clamped to valid atmosphere range
+    r_raw = builder.vec_math('LENGTH', -800, 0, 'r_raw')
+    builder.link(camera_km.outputs[0], r_raw.inputs[0])
+    
+    # Clamp r to [bottom_radius, top_radius]
+    BOTTOM_RADIUS = 6360.0
+    TOP_RADIUS = 6420.0
+    
+    r_min = builder.math('MAXIMUM', -600, 0, 'r_min', v1=BOTTOM_RADIUS)
+    builder.link(r_raw.outputs['Value'], r_min.inputs[0])
+    
+    r = builder.math('MINIMUM', -400, 0, 'r', v1=TOP_RADIUS)
+    builder.link(r_min.outputs[0], r.inputs[0])
     
     # rmu = dot(camera, view_ray)
     rmu = builder.vec_math('DOT_PRODUCT', -800, -100, 'r×mu')
@@ -655,18 +665,18 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(view_ray.outputs[0], rmu.inputs[1])
     
     # mu = rmu / r
-    mu = builder.math('DIVIDE', -600, -50, 'mu')
+    mu = builder.math('DIVIDE', -200, -50, 'mu')
     builder.link(rmu.outputs['Value'], mu.inputs[0])
-    builder.link(r.outputs['Value'], mu.inputs[1])
+    builder.link(r.outputs[0], mu.inputs[1])
     
     # mu_s = dot(camera, sun_direction) / r
     cam_dot_sun = builder.vec_math('DOT_PRODUCT', -800, -200, 'cam·sun')
     builder.link(camera_km.outputs[0], cam_dot_sun.inputs[0])
     builder.link(group_input.outputs['Sun_Direction'], cam_dot_sun.inputs[1])
     
-    mu_s = builder.math('DIVIDE', -600, -200, 'mu_s')
+    mu_s = builder.math('DIVIDE', -200, -200, 'mu_s')
     builder.link(cam_dot_sun.outputs['Value'], mu_s.inputs[0])
-    builder.link(r.outputs['Value'], mu_s.inputs[1])
+    builder.link(r.outputs[0], mu_s.inputs[1])
     
     # nu = dot(view_ray, sun_direction)
     nu = builder.vec_math('DOT_PRODUCT', -800, -300, 'nu')
@@ -677,12 +687,8 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # TRANSMITTANCE LOOKUP
     # =========================================================================
     
-    # For now, use constant radii - we'll make these dynamic later
-    BOTTOM_RADIUS = 6360.0
-    TOP_RADIUS = 6420.0
-    
     u_socket, v_socket = create_transmittance_uv_nodes(
-        builder, r.outputs['Value'], mu.outputs[0],
+        builder, r.outputs[0], mu.outputs[0],
         BOTTOM_RADIUS, TOP_RADIUS,
         base_x=-400, base_y=400
     )
@@ -779,31 +785,38 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(scat_uv_cam.outputs[0], tex_scat_cam.inputs['Vector'])
     
     # --- POINT PARAMETERS (r_p, mu_p, mu_s_p) ---
-    # r_p = length(point)
-    r_p = builder.vec_math('LENGTH', 0, -600, 'r_p')
-    builder.link(surface_point_km.outputs[0], r_p.inputs[0])
+    # r_p = length(point), clamped to valid atmosphere range
+    r_p_raw = builder.vec_math('LENGTH', 0, -600, 'r_p_raw')
+    builder.link(surface_point_km.outputs[0], r_p_raw.inputs[0])
+    
+    # Clamp r_p to [bottom_radius, top_radius]
+    r_p_min = builder.math('MAXIMUM', 200, -600, 'r_p_min', v1=BOTTOM_RADIUS)
+    builder.link(r_p_raw.outputs['Value'], r_p_min.inputs[0])
+    
+    r_p = builder.math('MINIMUM', 400, -600, 'r_p', v1=TOP_RADIUS)
+    builder.link(r_p_min.outputs[0], r_p.inputs[0])
     
     # mu_p = dot(point, view_ray) / r_p
     point_dot_view = builder.vec_math('DOT_PRODUCT', 0, -700, 'point·view')
     builder.link(surface_point_km.outputs[0], point_dot_view.inputs[0])
     builder.link(view_ray.outputs[0], point_dot_view.inputs[1])
     
-    mu_p = builder.math('DIVIDE', 200, -650, 'mu_p')
+    mu_p = builder.math('DIVIDE', 600, -650, 'mu_p')
     builder.link(point_dot_view.outputs['Value'], mu_p.inputs[0])
-    builder.link(r_p.outputs['Value'], mu_p.inputs[1])
+    builder.link(r_p.outputs[0], mu_p.inputs[1])
     
     # mu_s_p = dot(point, sun_direction) / r_p
     point_dot_sun = builder.vec_math('DOT_PRODUCT', 0, -800, 'point·sun')
     builder.link(surface_point_km.outputs[0], point_dot_sun.inputs[0])
     builder.link(group_input.outputs['Sun_Direction'], point_dot_sun.inputs[1])
     
-    mu_s_p = builder.math('DIVIDE', 200, -750, 'mu_s_p')
+    mu_s_p = builder.math('DIVIDE', 600, -750, 'mu_s_p')
     builder.link(point_dot_sun.outputs['Value'], mu_s_p.inputs[0])
-    builder.link(r_p.outputs['Value'], mu_s_p.inputs[1])
+    builder.link(r_p.outputs[0], mu_s_p.inputs[1])
     
     # --- SCATTERING AT POINT (looking toward infinity) ---
     scat_u_pt, scat_v_pt, scat_r_pt, scat_frac_pt = create_scattering_uv_nodes(
-        builder, r_p.outputs['Value'], mu_p.outputs[0], mu_s_p.outputs[0], nu.outputs['Value'],
+        builder, r_p.outputs[0], mu_p.outputs[0], mu_s_p.outputs[0], nu.outputs['Value'],
         BOTTOM_RADIUS, TOP_RADIUS, MU_S_MIN,
         base_x=400, base_y=-600
     )
