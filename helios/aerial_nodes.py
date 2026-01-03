@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 23  # DEBUG: Output u_mu and ray_intersects_ground to diagnose horizon discontinuity
+AERIAL_NODE_VERSION = 24  # DEBUG: Output u_mu (scattering texture Y coord) to diagnose horizon discontinuity
 
 
 # =============================================================================
@@ -266,21 +266,25 @@ def create_transmittance_uv(builder, r_socket, mu_socket, base_x, base_y, suffix
 
 def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_socket,
                                scattering_path, base_x, base_y, suffix="",
-                               ray_intersects_ground_socket=None):
+                               ray_intersects_ground_socket=None, return_u_mu=False):
     """
     Sample scattering texture with proper depth slice interpolation.
     
     Args:
         ray_intersects_ground_socket: If provided, uses this to select u_mu formula.
                                       Must be same for camera and point lookups per reference.
+        return_u_mu: If True, returns (color_socket, u_mu_socket) tuple for debugging.
     
-    Returns the interpolated scattering color socket.
+    Returns the interpolated scattering color socket (or tuple if return_u_mu=True).
     """
     # First compute all UV components
     u_r, u_mu, u_mu_s, x_nu = _compute_scattering_uvwz(
         builder, r_socket, mu_socket, mu_s_socket, nu_socket,
         base_x, base_y, suffix, ray_intersects_ground_socket
     )
+    
+    # Store u_mu for potential debug output
+    u_mu_for_debug = u_mu
     
     # Compute nu slice index and fraction
     tex_coord_x = builder.math('MULTIPLY', base_x + 2400, base_y, f'tex_x{suffix}', 
@@ -363,6 +367,8 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
     builder.link(tex0.outputs['Color'], mix.inputs[6])  # A
     builder.link(tex1.outputs['Color'], mix.inputs[7])  # B
     
+    if return_u_mu:
+        return mix.outputs[2], u_mu_for_debug.outputs[0]  # Result + u_mu for debug
     return mix.outputs[2]  # Result
 
 
@@ -1086,9 +1092,10 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # =========================================================================
     
     # Sample scattering at camera position with depth interpolation
-    scat_cam_color = sample_scattering_texture(
+    # DEBUG V24: Also return u_mu for debugging
+    scat_cam_color, u_mu_cam_debug = sample_scattering_texture(
         builder, r.outputs[0], mu_final.outputs[0], mu_s_final.outputs[0], nu.outputs['Value'],
-        scattering_path, 1800, 200, "_cam", ray_intersects_ground.outputs[0]
+        scattering_path, 1800, 200, "_cam", ray_intersects_ground.outputs[0], return_u_mu=True
     )
     
     # Sample scattering at point position with depth interpolation
@@ -1154,19 +1161,16 @@ def create_aerial_perspective_node_group(lut_dir=None):
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
     
-    # DEBUG V23: Output mu, ray_intersects_ground, and u_mu as RGB to diagnose horizon
-    # R = mu (clamped to 0-1 as (mu+1)/2), G = ray_intersects_ground, B = 0
-    mu_debug = builder.math('ADD', 6100, 100, 'mu_debug', v1=1.0)
-    builder.link(mu_final.outputs[0], mu_debug.inputs[0])
-    mu_debug_scaled = builder.math('MULTIPLY', 6250, 100, 'mu_debug_scaled', v1=0.5)
-    builder.link(mu_debug.outputs[0], mu_debug_scaled.inputs[0])
-    
+    # DEBUG V24: Output u_mu (scattering Y coord) and ray_intersects_ground
+    # R = u_mu (should be 0-1, with 0.5 being horizon boundary), G = ground flag, B = 0
     debug_output = builder.combine_xyz(6400, 50, 'Debug_Output')
-    builder.link(mu_debug_scaled.outputs[0], debug_output.inputs['X'])  # R = mu mapped to 0-1
+    builder.link(u_mu_cam_debug, debug_output.inputs['X'])  # R = u_mu (0-1)
     builder.link(ray_intersects_ground.outputs[0], debug_output.inputs['Y'])  # G = ground flag
     # Z = 0 (default)
     
-    # Output debug for now - shows mu (red) and ground flag (green)
+    # Output debug - shows u_mu (red) and ground flag (green)
+    # Expected: u_mu should be smooth, ~0.5 near horizon
+    # Ground rays: u_mu in [0, 0.5], Non-ground: u_mu in [0.5, 1.0]
     builder.link(debug_output.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
