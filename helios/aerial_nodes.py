@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 11  # DEBUG: Output S_cam directly to isolate problem
+AERIAL_NODE_VERSION = 12  # DEBUG: Output S_point to check point scattering lookup
 
 
 # =============================================================================
@@ -869,13 +869,18 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(scat_cam_color, scat_cam_phased.inputs[0])
     builder.link(rayleigh_phase.outputs[0], scat_cam_phased.inputs['Scale'])
     
+    # DEBUG: Output S_point to check point scattering lookup
+    scat_pt_phased = builder.vec_math('SCALE', 5950, 200, 'S_pt_Phased')
+    builder.link(scat_pt_color, scat_pt_phased.inputs[0])
+    builder.link(rayleigh_phase.outputs[0], scat_pt_phased.inputs['Scale'])
+    
     # =========================================================================
     # OUTPUTS
     # =========================================================================
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
-    # DEBUG: Output S_cam instead of inscatter to compare with sky shader
-    builder.link(scat_cam_phased.outputs[0], group_output.inputs['Inscatter'])
+    # DEBUG: Output S_point instead to check point scattering lookup
+    builder.link(scat_pt_phased.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
