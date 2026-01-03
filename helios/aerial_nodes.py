@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 13  # DEBUG: Output T×S_point to check transmittance effect
+AERIAL_NODE_VERSION = 14  # DEBUG: Output raw inscatter (S_cam - T×S_point) before clamping
 
 
 # =============================================================================
@@ -879,11 +879,12 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # =========================================================================
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
-    # DEBUG: Output T×S_point to see transmittance effect
-    t_times_scat_phased = builder.vec_math('SCALE', 5950, 300, 'TxS_pt_Phased')
-    builder.link(t_times_scat.outputs[0], t_times_scat_phased.inputs[0])
-    builder.link(rayleigh_phase.outputs[0], t_times_scat_phased.inputs['Scale'])
-    builder.link(t_times_scat_phased.outputs[0], group_output.inputs['Inscatter'])
+    # DEBUG: Output raw inscatter (S_cam - T×S_point) with phase but NO clamping
+    # This will show negative values as black but positive values should be visible
+    inscatter_raw_phased = builder.vec_math('SCALE', 5950, 300, 'Inscatter_Raw_Phased')
+    builder.link(inscatter_raw.outputs[0], inscatter_raw_phased.inputs[0])
+    builder.link(rayleigh_phase.outputs[0], inscatter_raw_phased.inputs['Scale'])
+    builder.link(inscatter_raw_phased.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
