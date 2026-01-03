@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 18  # DEBUG: Output (r_p - r) to check altitude difference
+AERIAL_NODE_VERSION = 19  # TEST: Invert u_r to see if depth slices are stored in opposite order
 
 
 # =============================================================================
@@ -222,9 +222,13 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
     builder.link(tex_x_plus_mus.outputs[0], uvw_x.inputs[0])
     
     # Compute depth slice indices and fraction
+    # TEST: Invert u_r to check if depth slices are stored in opposite order
+    u_r_inverted = builder.math('SUBTRACT', base_x + 2300, base_y - 100, f'u_r_inv{suffix}', v0=1.0)
+    builder.link(u_r.outputs[0], u_r_inverted.inputs[1])
+    
     depth_scaled = builder.math('MULTIPLY', base_x + 2400, base_y - 100, f'depth_sc{suffix}', 
                                 v1=float(SCATTERING_TEXTURE_DEPTH - 1))
-    builder.link(u_r.outputs[0], depth_scaled.inputs[0])
+    builder.link(u_r_inverted.outputs[0], depth_scaled.inputs[0])
     
     depth_floor = builder.math('FLOOR', base_x + 2550, base_y - 100, f'depth_floor{suffix}')
     builder.link(depth_scaled.outputs[0], depth_floor.inputs[0])
@@ -879,22 +883,8 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # =========================================================================
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
-    # DEBUG: Output (r_p - r) to check altitude difference
-    # For objects ABOVE horizon: r_p > r (positive difference, should be gray/white)
-    # For objects BELOW horizon: could be r_p < r or r_p > r depending on geometry
-    # Scale by 1000 to make small km differences visible (1km diff = 1.0 in output)
-    r_diff = builder.math('SUBTRACT', 5950, 300, 'r_p-r')
-    builder.link(r_p.outputs[0], r_diff.inputs[0])
-    builder.link(r.outputs[0], r_diff.inputs[1])
-    
-    r_diff_scaled = builder.math('MULTIPLY', 6100, 300, 'r_diff_x1000', v1=1000.0)
-    builder.link(r_diff.outputs[0], r_diff_scaled.inputs[0])
-    
-    r_diff_debug = builder.combine_xyz(6250, 300, 'r_diff_debug')
-    builder.link(r_diff_scaled.outputs[0], r_diff_debug.inputs['X'])
-    builder.link(r_diff_scaled.outputs[0], r_diff_debug.inputs['Y'])
-    builder.link(r_diff_scaled.outputs[0], r_diff_debug.inputs['Z'])
-    builder.link(r_diff_debug.outputs[0], group_output.inputs['Inscatter'])
+    # Restore proper inscatter output with phase function
+    builder.link(inscatter_phased.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
