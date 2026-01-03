@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 10  # Restore Y flip, add x_mu clamping to match sky_nodes.py
+AERIAL_NODE_VERSION = 11  # DEBUG: Output S_cam directly to isolate problem
 
 
 # =============================================================================
@@ -864,12 +864,18 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(inscatter_max.outputs[0], inscatter_phased.inputs[0])
     builder.link(rayleigh_phase.outputs[0], inscatter_phased.inputs['Scale'])
     
+    # DEBUG: Also output S_cam directly (like sky shader) to compare
+    scat_cam_phased = builder.vec_math('SCALE', 5950, 100, 'S_cam_Phased')
+    builder.link(scat_cam_color, scat_cam_phased.inputs[0])
+    builder.link(rayleigh_phase.outputs[0], scat_cam_phased.inputs['Scale'])
+    
     # =========================================================================
     # OUTPUTS
     # =========================================================================
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
-    builder.link(inscatter_phased.outputs[0], group_output.inputs['Inscatter'])
+    # DEBUG: Output S_cam instead of inscatter to compare with sky shader
+    builder.link(scat_cam_phased.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
