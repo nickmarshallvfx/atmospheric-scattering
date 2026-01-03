@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 15  # DEBUG: Output mu_s_p to see sun angle at point
+AERIAL_NODE_VERSION = 16  # DEBUG: Output S_cam - S_point (no transmittance) to isolate color issue
 
 
 # =============================================================================
@@ -879,14 +879,17 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # =========================================================================
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
-    # DEBUG: Output mu_s_p as grayscale to see sun angle at point
-    # mu_s_p should be similar to mu_s (sun elevation). If it's going to 0 or negative,
-    # that would explain sunset-like yellow/orange colors
-    mu_s_p_debug = builder.combine_xyz(5950, 300, 'mu_s_p_debug')
-    builder.link(mu_s_p_final.outputs[0], mu_s_p_debug.inputs['X'])
-    builder.link(mu_s_p_final.outputs[0], mu_s_p_debug.inputs['Y'])
-    builder.link(mu_s_p_final.outputs[0], mu_s_p_debug.inputs['Z'])
-    builder.link(mu_s_p_debug.outputs[0], group_output.inputs['Inscatter'])
+    # DEBUG: Output S_cam - S_point (without transmittance) to isolate color issue
+    # If this shows yellow/orange above horizon, the issue is in scattering values
+    # If this shows correct blue, the issue is with transmittance
+    scat_diff_raw = builder.vec_math('SUBTRACT', 5950, 300, 'S_cam-S_pt')
+    builder.link(scat_cam_color, scat_diff_raw.inputs[0])
+    builder.link(scat_pt_color, scat_diff_raw.inputs[1])
+    
+    scat_diff_phased = builder.vec_math('SCALE', 6100, 300, 'ScatDiff_Phased')
+    builder.link(scat_diff_raw.outputs[0], scat_diff_phased.inputs[0])
+    builder.link(rayleigh_phase.outputs[0], scat_diff_phased.inputs['Scale'])
+    builder.link(scat_diff_phased.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
