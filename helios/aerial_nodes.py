@@ -49,7 +49,11 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 25  # DEBUG: Output u_mu_ground directly to verify ground formula (bypassing mix)
+AERIAL_NODE_VERSION = 26  # FIX: Add minimum camera altitude to prevent ground-level formula breakdown
+
+# Minimum virtual camera altitude for atmospheric calculations (km)
+# This prevents degenerate cases when camera is at planet surface
+MIN_CAMERA_ALTITUDE = 0.5  # 500 meters minimum
 
 
 # =============================================================================
@@ -782,11 +786,14 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # CAMERA PARAMETERS (r, mu, mu_s, nu)
     # =========================================================================
     
-    # r = length(camera), clamped
+    # r = length(camera), clamped to minimum altitude above ground
+    # This prevents degenerate cases when camera is at planet surface
     r_raw = builder.vec_math('LENGTH', -1400, 300, 'r_raw')
     builder.link(camera_km.outputs[0], r_raw.inputs[0])
     
-    r_min = builder.math('MAXIMUM', -1200, 300, 'r_min', v1=BOTTOM_RADIUS)
+    # Enforce minimum altitude: r >= bottom_radius + MIN_CAMERA_ALTITUDE
+    min_r = BOTTOM_RADIUS + MIN_CAMERA_ALTITUDE
+    r_min = builder.math('MAXIMUM', -1200, 300, 'r_min', v1=min_r)
     builder.link(r_raw.outputs['Value'], r_min.inputs[0])
     
     r = builder.math('MINIMUM', -1000, 300, 'r', v1=TOP_RADIUS)
@@ -1093,10 +1100,9 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # =========================================================================
     
     # Sample scattering at camera position with depth interpolation
-    # DEBUG V25: Also return u_mu and u_mu_ground for debugging
-    scat_cam_color, u_mu_cam_debug, u_mu_ground_debug = sample_scattering_texture(
+    scat_cam_color = sample_scattering_texture(
         builder, r.outputs[0], mu_final.outputs[0], mu_s_final.outputs[0], nu.outputs['Value'],
-        scattering_path, 1800, 200, "_cam", ray_intersects_ground.outputs[0], return_u_mu=True
+        scattering_path, 1800, 200, "_cam", ray_intersects_ground.outputs[0]
     )
     
     # Sample scattering at point position with depth interpolation
@@ -1162,17 +1168,8 @@ def create_aerial_perspective_node_group(lut_dir=None):
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
     
-    # DEBUG V25: Output u_mu_ground DIRECTLY (bypassing mix) to verify ground formula
-    # R = u_mu_ground (should be in [0, 0.5]), G = u_mu (mixed), B = ground flag
-    debug_output = builder.combine_xyz(6400, 50, 'Debug_Output')
-    builder.link(u_mu_ground_debug, debug_output.inputs['X'])  # R = u_mu_ground (raw, no mix)
-    builder.link(u_mu_cam_debug, debug_output.inputs['Y'])  # G = u_mu (after mix selection)
-    builder.link(ray_intersects_ground.outputs[0], debug_output.inputs['Z'])  # B = ground flag
-    
-    # If ground formula is correct:
-    #   R (u_mu_ground) should be in [0, 0.5] everywhere, darker near horizon
-    #   G (u_mu mixed) should equal R when B=1 (ground), different when B=0
-    builder.link(debug_output.outputs[0], group_output.inputs['Inscatter'])
+    # Output proper inscatter with phase function applied
+    builder.link(inscatter_phased.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
