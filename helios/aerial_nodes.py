@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 14  # DEBUG: Output raw inscatter (S_cam - T×S_point) before clamping
+AERIAL_NODE_VERSION = 15  # DEBUG: Output mu_s_p to see sun angle at point
 
 
 # =============================================================================
@@ -879,12 +879,14 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # =========================================================================
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
-    # DEBUG: Output raw inscatter (S_cam - T×S_point) with phase but NO clamping
-    # This will show negative values as black but positive values should be visible
-    inscatter_raw_phased = builder.vec_math('SCALE', 5950, 300, 'Inscatter_Raw_Phased')
-    builder.link(inscatter_raw.outputs[0], inscatter_raw_phased.inputs[0])
-    builder.link(rayleigh_phase.outputs[0], inscatter_raw_phased.inputs['Scale'])
-    builder.link(inscatter_raw_phased.outputs[0], group_output.inputs['Inscatter'])
+    # DEBUG: Output mu_s_p as grayscale to see sun angle at point
+    # mu_s_p should be similar to mu_s (sun elevation). If it's going to 0 or negative,
+    # that would explain sunset-like yellow/orange colors
+    mu_s_p_debug = builder.combine_xyz(5950, 300, 'mu_s_p_debug')
+    builder.link(mu_s_p_final.outputs[0], mu_s_p_debug.inputs['X'])
+    builder.link(mu_s_p_final.outputs[0], mu_s_p_debug.inputs['Y'])
+    builder.link(mu_s_p_final.outputs[0], mu_s_p_debug.inputs['Z'])
+    builder.link(mu_s_p_debug.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
