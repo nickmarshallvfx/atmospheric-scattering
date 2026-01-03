@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 17  # DEBUG: Output mu_p to check view angle at point
+AERIAL_NODE_VERSION = 18  # DEBUG: Output (r_p - r) to check altitude difference
 
 
 # =============================================================================
@@ -879,14 +879,22 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # =========================================================================
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
-    # DEBUG: Output mu_p as grayscale to check view angle at point
-    # mu_p should be similar to mu (view direction cosine)
-    # For looking up: mu > 0, mu_p should also be > 0
-    mu_p_debug = builder.combine_xyz(5950, 300, 'mu_p_debug')
-    builder.link(mu_p_final.outputs[0], mu_p_debug.inputs['X'])
-    builder.link(mu_p_final.outputs[0], mu_p_debug.inputs['Y'])
-    builder.link(mu_p_final.outputs[0], mu_p_debug.inputs['Z'])
-    builder.link(mu_p_debug.outputs[0], group_output.inputs['Inscatter'])
+    # DEBUG: Output (r_p - r) to check altitude difference
+    # For objects ABOVE horizon: r_p > r (positive difference, should be gray/white)
+    # For objects BELOW horizon: could be r_p < r or r_p > r depending on geometry
+    # Scale by 1000 to make small km differences visible (1km diff = 1.0 in output)
+    r_diff = builder.math('SUBTRACT', 5950, 300, 'r_p-r')
+    builder.link(r_p.outputs[0], r_diff.inputs[0])
+    builder.link(r.outputs[0], r_diff.inputs[1])
+    
+    r_diff_scaled = builder.math('MULTIPLY', 6100, 300, 'r_diff_x1000', v1=1000.0)
+    builder.link(r_diff.outputs[0], r_diff_scaled.inputs[0])
+    
+    r_diff_debug = builder.combine_xyz(6250, 300, 'r_diff_debug')
+    builder.link(r_diff_scaled.outputs[0], r_diff_debug.inputs['X'])
+    builder.link(r_diff_scaled.outputs[0], r_diff_debug.inputs['Y'])
+    builder.link(r_diff_scaled.outputs[0], r_diff_debug.inputs['Z'])
+    builder.link(r_diff_debug.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
