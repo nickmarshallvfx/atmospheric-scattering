@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 19  # TEST: Invert u_r to see if depth slices are stored in opposite order
+AERIAL_NODE_VERSION = 21  # FIX: Use same ray_r_mu_intersects_ground for both lookups
 
 
 # =============================================================================
@@ -192,16 +192,21 @@ def create_transmittance_uv(builder, r_socket, mu_socket, base_x, base_y, suffix
 # =============================================================================
 
 def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_socket,
-                               scattering_path, base_x, base_y, suffix=""):
+                               scattering_path, base_x, base_y, suffix="",
+                               ray_intersects_ground_socket=None):
     """
     Sample scattering texture with proper depth slice interpolation.
+    
+    Args:
+        ray_intersects_ground_socket: If provided, uses this to select u_mu formula.
+                                      Must be same for camera and point lookups per reference.
     
     Returns the interpolated scattering color socket.
     """
     # First compute all UV components
     u_r, u_mu, u_mu_s, x_nu = _compute_scattering_uvwz(
         builder, r_socket, mu_socket, mu_s_socket, nu_socket,
-        base_x, base_y, suffix
+        base_x, base_y, suffix, ray_intersects_ground_socket
     )
     
     # Compute nu slice index and fraction
@@ -222,13 +227,9 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
     builder.link(tex_x_plus_mus.outputs[0], uvw_x.inputs[0])
     
     # Compute depth slice indices and fraction
-    # TEST: Invert u_r to check if depth slices are stored in opposite order
-    u_r_inverted = builder.math('SUBTRACT', base_x + 2300, base_y - 100, f'u_r_inv{suffix}', v0=1.0)
-    builder.link(u_r.outputs[0], u_r_inverted.inputs[1])
-    
     depth_scaled = builder.math('MULTIPLY', base_x + 2400, base_y - 100, f'depth_sc{suffix}', 
                                 v1=float(SCATTERING_TEXTURE_DEPTH - 1))
-    builder.link(u_r_inverted.outputs[0], depth_scaled.inputs[0])
+    builder.link(u_r.outputs[0], depth_scaled.inputs[0])
     
     depth_floor = builder.math('FLOOR', base_x + 2550, base_y - 100, f'depth_floor{suffix}')
     builder.link(depth_scaled.outputs[0], depth_floor.inputs[0])
@@ -293,9 +294,13 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
 
 
 def _compute_scattering_uvwz(builder, r_socket, mu_socket, mu_s_socket, nu_socket,
-                              base_x, base_y, suffix=""):
+                              base_x, base_y, suffix="", ray_intersects_ground_socket=None):
     """
     Compute scattering texture UV coordinates (u_r, u_mu, u_mu_s, x_nu).
+    
+    Args:
+        ray_intersects_ground_socket: If provided, selects between ground/non-ground u_mu formula.
+                                      Value 1.0 = ground intersecting, 0.0 = non-ground.
     
     Returns (u_r_node, u_mu_node, u_mu_s_node, x_nu_node).
     """
@@ -402,7 +407,7 @@ def _compute_scattering_uvwz(builder, r_socket, mu_socket, mu_s_socket, nu_socke
     x_mu = builder.math('MAXIMUM', base_x + 1650, base_y - 150, f'x_mu{suffix}', v1=0.0)
     builder.link(x_mu_max.outputs[0], x_mu.inputs[0])
     
-    # For non-ground-intersecting rays: u_mu = 0.5 + 0.5 * GetTextureCoordFromUnitRange(x_mu, MU_SIZE/2)
+    # GetTextureCoordFromUnitRange for MU_SIZE/2
     mu_scale = 1.0 - 2.0 / SCATTERING_TEXTURE_MU_SIZE
     mu_offset = 1.0 / SCATTERING_TEXTURE_MU_SIZE
     
@@ -412,15 +417,32 @@ def _compute_scattering_uvwz(builder, r_socket, mu_socket, mu_s_socket, nu_socke
     x_mu_offset = builder.math('ADD', base_x + 1950, base_y - 150, f'x_mu_off{suffix}', v1=mu_offset)
     builder.link(x_mu_scaled.outputs[0], x_mu_offset.inputs[0])
     
-    u_mu_half = builder.math('MULTIPLY', base_x + 2100, base_y - 150, f'u_mu_half{suffix}', v1=0.5)
-    builder.link(x_mu_offset.outputs[0], u_mu_half.inputs[0])
+    # Non-ground formula: u_mu = 0.5 + 0.5 * coord  -> maps to [0.5, 1.0]
+    u_mu_nonground_half = builder.math('MULTIPLY', base_x + 2100, base_y - 150, f'u_mu_ng_half{suffix}', v1=0.5)
+    builder.link(x_mu_offset.outputs[0], u_mu_nonground_half.inputs[0])
     
-    u_mu = builder.math('ADD', base_x + 2250, base_y - 150, f'u_mu{suffix}', v0=0.5)
-    builder.link(u_mu_half.outputs[0], u_mu.inputs[1])
+    u_mu_nonground = builder.math('ADD', base_x + 2250, base_y - 150, f'u_mu_ng{suffix}', v0=0.5)
+    builder.link(u_mu_nonground_half.outputs[0], u_mu_nonground.inputs[1])
+    
+    # Ground formula: u_mu = 0.5 * coord  -> maps to [0.0, 0.5]
+    u_mu_ground = builder.math('MULTIPLY', base_x + 2100, base_y - 200, f'u_mu_g{suffix}', v1=0.5)
+    builder.link(x_mu_offset.outputs[0], u_mu_ground.inputs[0])
+    
+    # Select based on ray_intersects_ground (if provided)
+    if ray_intersects_ground_socket is not None:
+        # Mix: factor=0 -> non-ground (A), factor=1 -> ground (B)
+        u_mu_mix = builder.mix('FLOAT', 'MIX', base_x + 2350, base_y - 175, f'u_mu_mix{suffix}')
+        builder.link(ray_intersects_ground_socket, u_mu_mix.inputs['Factor'])
+        builder.link(u_mu_nonground.outputs[0], u_mu_mix.inputs[2])  # A (non-ground)
+        builder.link(u_mu_ground.outputs[0], u_mu_mix.inputs[3])  # B (ground)
+        u_mu_selected = u_mu_mix.outputs[0]
+    else:
+        # Default to non-ground formula
+        u_mu_selected = u_mu_nonground.outputs[0]
     
     # Clamp u_mu
     u_mu_min = builder.math('MAXIMUM', base_x + 2400, base_y - 150, f'u_mu_min{suffix}', v1=0.0)
-    builder.link(u_mu.outputs[0], u_mu_min.inputs[0])
+    builder.link(u_mu_selected, u_mu_min.inputs[0])
     u_mu_final = builder.math('MINIMUM', base_x + 2550, base_y - 150, f'u_mu_final{suffix}', v1=1.0)
     builder.link(u_mu_min.outputs[0], u_mu_final.inputs[0])
     
@@ -813,19 +835,59 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(trans_b_clamp.outputs[0], transmittance_final.inputs['Z'])
     
     # =========================================================================
+    # RAY INTERSECTS GROUND - compute once from camera params, use for both lookups
+    # Reference: RayIntersectsGround(r, mu) = mu < 0 && r²(μ²-1) + bottom² >= 0
+    # =========================================================================
+    
+    # Condition 1: mu < 0
+    mu_negative = builder.math('LESS_THAN', 2000, 300, 'mu<0', v1=0.0)
+    builder.link(mu_final.outputs[0], mu_negative.inputs[0])
+    
+    # Condition 2: r²(μ²-1) + bottom² >= 0
+    # We already have r² and μ² from earlier, recompute for clarity
+    r_sq_ground = builder.math('MULTIPLY', 2000, 250, 'r²_g')
+    builder.link(r.outputs[0], r_sq_ground.inputs[0])
+    builder.link(r.outputs[0], r_sq_ground.inputs[1])
+    
+    mu_sq_ground = builder.math('MULTIPLY', 2000, 200, 'μ²_g')
+    builder.link(mu_final.outputs[0], mu_sq_ground.inputs[0])
+    builder.link(mu_final.outputs[0], mu_sq_ground.inputs[1])
+    
+    mu_sq_m1_ground = builder.math('SUBTRACT', 2150, 200, 'μ²-1_g', v1=1.0)
+    builder.link(mu_sq_ground.outputs[0], mu_sq_m1_ground.inputs[0])
+    
+    r_sq_term_ground = builder.math('MULTIPLY', 2300, 225, 'r²×(μ²-1)')
+    builder.link(r_sq_ground.outputs[0], r_sq_term_ground.inputs[0])
+    builder.link(mu_sq_m1_ground.outputs[0], r_sq_term_ground.inputs[1])
+    
+    discriminant_ground = builder.math('ADD', 2450, 225, 'disc_g', v1=BOTTOM_RADIUS * BOTTOM_RADIUS)
+    builder.link(r_sq_term_ground.outputs[0], discriminant_ground.inputs[0])
+    
+    # disc >= 0
+    disc_ge_zero = builder.math('GREATER_THAN', 2600, 225, 'disc>=0', v1=-0.0001)  # Small epsilon
+    builder.link(discriminant_ground.outputs[0], disc_ge_zero.inputs[0])
+    
+    # Both conditions must be true: mu < 0 AND disc >= 0
+    ray_intersects_ground = builder.math('MULTIPLY', 2750, 250, 'ray_hits_ground')
+    builder.link(mu_negative.outputs[0], ray_intersects_ground.inputs[0])
+    builder.link(disc_ge_zero.outputs[0], ray_intersects_ground.inputs[1])
+    
+    # =========================================================================
     # SCATTERING LOOKUPS - Camera and Point (with depth interpolation)
+    # Both use SAME ray_intersects_ground from camera params (per reference)
     # =========================================================================
     
     # Sample scattering at camera position with depth interpolation
     scat_cam_color = sample_scattering_texture(
         builder, r.outputs[0], mu_final.outputs[0], mu_s_final.outputs[0], nu.outputs['Value'],
-        scattering_path, 1800, 200, "_cam"
+        scattering_path, 1800, 200, "_cam", ray_intersects_ground.outputs[0]
     )
     
     # Sample scattering at point position with depth interpolation
+    # CRITICAL: Use SAME ray_intersects_ground from camera, not from point!
     scat_pt_color = sample_scattering_texture(
         builder, r_p.outputs[0], mu_p_final.outputs[0], mu_s_p_final.outputs[0], nu.outputs['Value'],
-        scattering_path, 1800, -400, "_pt"
+        scattering_path, 1800, -400, "_pt", ray_intersects_ground.outputs[0]
     )
     
     # =========================================================================
