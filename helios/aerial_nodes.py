@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 8  # Add depth slice interpolation to fix banding
+AERIAL_NODE_VERSION = 9  # Remove Y flip - test if texture coords are correct
 
 
 # =============================================================================
@@ -158,10 +158,6 @@ def create_transmittance_uv(builder, r_socket, mu_socket, base_x, base_y, suffix
     v_coord = builder.math('ADD', base_x + 900, base_y, f't_v{suffix}', v1=v_offset)
     builder.link(v_scaled.outputs[0], v_coord.inputs[0])
     
-    # Flip V for Blender texture convention
-    v_flip = builder.math('SUBTRACT', base_x + 1050, base_y, f't_v_flip{suffix}', v0=1.0)
-    builder.link(v_coord.outputs[0], v_flip.inputs[1])
-    
     # x_mu = (mu + 1) / 2
     mu_plus1 = builder.math('ADD', base_x, base_y - 50, f't_mu+1{suffix}', v0=1.0)
     builder.link(mu_socket, mu_plus1.inputs[1])
@@ -179,10 +175,10 @@ def create_transmittance_uv(builder, r_socket, mu_socket, base_x, base_y, suffix
     u_coord = builder.math('ADD', base_x + 450, base_y - 50, f't_u{suffix}', v1=u_offset)
     builder.link(u_scaled.outputs[0], u_coord.inputs[0])
     
-    # Combine UV
+    # Combine UV - use v_coord directly (no flip - testing texture convention)
     uv = builder.combine_xyz(base_x + 1200, base_y - 25, f'Trans_UV{suffix}')
     builder.link(u_coord.outputs[0], uv.inputs['X'])
-    builder.link(v_flip.outputs[0], uv.inputs['Y'])
+    builder.link(v_coord.outputs[0], uv.inputs['Y'])
     
     return uv.outputs[0]
 
@@ -259,14 +255,11 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
                             v1=float(SCATTERING_TEXTURE_DEPTH))
     builder.link(slice1_plus_uvw.outputs[0], final_x1.inputs[0])
     
-    # Y coordinate (flip for Blender)
-    u_mu_flip = builder.math('SUBTRACT', base_x + 3000, base_y - 50, f'u_mu_flip{suffix}', v0=1.0)
-    builder.link(u_mu.outputs[0], u_mu_flip.inputs[1])
-    
+    # Y coordinate - use u_mu directly (no flip - testing if texture convention matches)
     # Sample depth slice 0
     uv0 = builder.combine_xyz(base_x + 3300, base_y, f'UV0{suffix}')
     builder.link(final_x0.outputs[0], uv0.inputs['X'])
-    builder.link(u_mu_flip.outputs[0], uv0.inputs['Y'])
+    builder.link(u_mu.outputs[0], uv0.inputs['Y'])
     
     tex0 = builder.image_texture(base_x + 3450, base_y, f'Scat0{suffix}', scattering_path)
     builder.link(uv0.outputs[0], tex0.inputs['Vector'])
@@ -274,7 +267,7 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
     # Sample depth slice 1
     uv1 = builder.combine_xyz(base_x + 3300, base_y - 150, f'UV1{suffix}')
     builder.link(final_x1.outputs[0], uv1.inputs['X'])
-    builder.link(u_mu_flip.outputs[0], uv1.inputs['Y'])
+    builder.link(u_mu.outputs[0], uv1.inputs['Y'])
     
     tex1 = builder.image_texture(base_x + 3450, base_y - 150, f'Scat1{suffix}', scattering_path)
     builder.link(uv1.outputs[0], tex1.inputs['Vector'])
