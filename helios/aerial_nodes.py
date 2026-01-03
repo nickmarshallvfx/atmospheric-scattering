@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 7  # Fix transmittance: T(cam→pt) = T(cam→top) / T(pt→top)
+AERIAL_NODE_VERSION = 8  # Add depth slice interpolation to fix banding
 
 
 # =============================================================================
@@ -188,15 +188,112 @@ def create_transmittance_uv(builder, r_socket, mu_socket, base_x, base_y, suffix
 
 
 # =============================================================================
-# SCATTERING UV HELPER - Creates UV for GetCombinedScattering
+# SCATTERING TEXTURE SAMPLER - Full sampling with depth interpolation
 # =============================================================================
 
-def create_scattering_uvs(builder, r_socket, mu_socket, mu_s_socket, nu_socket,
-                          base_x, base_y, suffix=""):
+def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_socket,
+                               scattering_path, base_x, base_y, suffix=""):
     """
-    Create scattering texture UV coordinates following reference exactly.
+    Sample scattering texture with proper depth slice interpolation.
     
-    Returns the final scattering color socket after all interpolation.
+    Returns the interpolated scattering color socket.
+    """
+    # First compute all UV components
+    u_r, u_mu, u_mu_s, x_nu = _compute_scattering_uvwz(
+        builder, r_socket, mu_socket, mu_s_socket, nu_socket,
+        base_x, base_y, suffix
+    )
+    
+    # Compute nu slice index and fraction
+    tex_coord_x = builder.math('MULTIPLY', base_x + 2400, base_y, f'tex_x{suffix}', 
+                               v1=float(SCATTERING_TEXTURE_NU_SIZE - 1))
+    builder.link(x_nu.outputs[0], tex_coord_x.inputs[0])
+    
+    tex_x_floor = builder.math('FLOOR', base_x + 2550, base_y, f'tex_x_floor{suffix}')
+    builder.link(tex_coord_x.outputs[0], tex_x_floor.inputs[0])
+    
+    # uvw_x = (tex_x + u_mu_s) / NU_SIZE
+    tex_x_plus_mus = builder.math('ADD', base_x + 2700, base_y, f'tex_x+mus{suffix}')
+    builder.link(tex_x_floor.outputs[0], tex_x_plus_mus.inputs[0])
+    builder.link(u_mu_s.outputs[0], tex_x_plus_mus.inputs[1])
+    
+    uvw_x = builder.math('DIVIDE', base_x + 2850, base_y, f'uvw_x{suffix}', 
+                         v1=float(SCATTERING_TEXTURE_NU_SIZE))
+    builder.link(tex_x_plus_mus.outputs[0], uvw_x.inputs[0])
+    
+    # Compute depth slice indices and fraction
+    depth_scaled = builder.math('MULTIPLY', base_x + 2400, base_y - 100, f'depth_sc{suffix}', 
+                                v1=float(SCATTERING_TEXTURE_DEPTH - 1))
+    builder.link(u_r.outputs[0], depth_scaled.inputs[0])
+    
+    depth_floor = builder.math('FLOOR', base_x + 2550, base_y - 100, f'depth_floor{suffix}')
+    builder.link(depth_scaled.outputs[0], depth_floor.inputs[0])
+    
+    depth_frac = builder.math('SUBTRACT', base_x + 2700, base_y - 100, f'depth_frac{suffix}')
+    builder.link(depth_scaled.outputs[0], depth_frac.inputs[0])
+    builder.link(depth_floor.outputs[0], depth_frac.inputs[1])
+    
+    # Depth ceil (clamped)
+    depth_ceil = builder.math('ADD', base_x + 2550, base_y - 150, f'depth_ceil{suffix}', v1=1.0)
+    builder.link(depth_floor.outputs[0], depth_ceil.inputs[0])
+    
+    depth_ceil_clamp = builder.math('MINIMUM', base_x + 2700, base_y - 150, f'depth_ceil_clamp{suffix}', 
+                                    v1=float(SCATTERING_TEXTURE_DEPTH - 1))
+    builder.link(depth_ceil.outputs[0], depth_ceil_clamp.inputs[0])
+    
+    # Compute final X for floor depth slice
+    slice0_plus_uvw = builder.math('ADD', base_x + 3000, base_y, f'slice0+uvw{suffix}')
+    builder.link(depth_floor.outputs[0], slice0_plus_uvw.inputs[0])
+    builder.link(uvw_x.outputs[0], slice0_plus_uvw.inputs[1])
+    
+    final_x0 = builder.math('DIVIDE', base_x + 3150, base_y, f'final_x0{suffix}', 
+                            v1=float(SCATTERING_TEXTURE_DEPTH))
+    builder.link(slice0_plus_uvw.outputs[0], final_x0.inputs[0])
+    
+    # Compute final X for ceil depth slice
+    slice1_plus_uvw = builder.math('ADD', base_x + 3000, base_y - 150, f'slice1+uvw{suffix}')
+    builder.link(depth_ceil_clamp.outputs[0], slice1_plus_uvw.inputs[0])
+    builder.link(uvw_x.outputs[0], slice1_plus_uvw.inputs[1])
+    
+    final_x1 = builder.math('DIVIDE', base_x + 3150, base_y - 150, f'final_x1{suffix}', 
+                            v1=float(SCATTERING_TEXTURE_DEPTH))
+    builder.link(slice1_plus_uvw.outputs[0], final_x1.inputs[0])
+    
+    # Y coordinate (flip for Blender)
+    u_mu_flip = builder.math('SUBTRACT', base_x + 3000, base_y - 50, f'u_mu_flip{suffix}', v0=1.0)
+    builder.link(u_mu.outputs[0], u_mu_flip.inputs[1])
+    
+    # Sample depth slice 0
+    uv0 = builder.combine_xyz(base_x + 3300, base_y, f'UV0{suffix}')
+    builder.link(final_x0.outputs[0], uv0.inputs['X'])
+    builder.link(u_mu_flip.outputs[0], uv0.inputs['Y'])
+    
+    tex0 = builder.image_texture(base_x + 3450, base_y, f'Scat0{suffix}', scattering_path)
+    builder.link(uv0.outputs[0], tex0.inputs['Vector'])
+    
+    # Sample depth slice 1
+    uv1 = builder.combine_xyz(base_x + 3300, base_y - 150, f'UV1{suffix}')
+    builder.link(final_x1.outputs[0], uv1.inputs['X'])
+    builder.link(u_mu_flip.outputs[0], uv1.inputs['Y'])
+    
+    tex1 = builder.image_texture(base_x + 3450, base_y - 150, f'Scat1{suffix}', scattering_path)
+    builder.link(uv1.outputs[0], tex1.inputs['Vector'])
+    
+    # Interpolate between depth slices
+    mix = builder.mix('RGBA', 'MIX', base_x + 3650, base_y - 75, f'DepthMix{suffix}')
+    builder.link(depth_frac.outputs[0], mix.inputs['Factor'])
+    builder.link(tex0.outputs['Color'], mix.inputs[6])  # A
+    builder.link(tex1.outputs['Color'], mix.inputs[7])  # B
+    
+    return mix.outputs[2]  # Result
+
+
+def _compute_scattering_uvwz(builder, r_socket, mu_socket, mu_s_socket, nu_socket,
+                              base_x, base_y, suffix=""):
+    """
+    Compute scattering texture UV coordinates (u_r, u_mu, u_mu_s, x_nu).
+    
+    Returns (u_r_node, u_mu_node, u_mu_s_node, x_nu_node).
     """
     
     # u_r: altitude coordinate
@@ -705,100 +802,20 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(trans_b_clamp.outputs[0], transmittance_final.inputs['Z'])
     
     # =========================================================================
-    # SCATTERING LOOKUPS - Camera and Point
+    # SCATTERING LOOKUPS - Camera and Point (with depth interpolation)
     # =========================================================================
     
-    # Create scattering UVs for camera position
-    u_r_cam, u_mu_cam, u_mu_s_cam, x_nu_cam = create_scattering_uvs(
+    # Sample scattering at camera position with depth interpolation
+    scat_cam_color = sample_scattering_texture(
         builder, r.outputs[0], mu_final.outputs[0], mu_s_final.outputs[0], nu.outputs['Value'],
-        1200, 200, "_cam"
+        scattering_path, 1800, 200, "_cam"
     )
     
-    # Create scattering UVs for point position
-    u_r_pt, u_mu_pt, u_mu_s_pt, x_nu_pt = create_scattering_uvs(
+    # Sample scattering at point position with depth interpolation
+    scat_pt_color = sample_scattering_texture(
         builder, r_p.outputs[0], mu_p_final.outputs[0], mu_s_p_final.outputs[0], nu.outputs['Value'],
-        1200, -600, "_pt"
+        scattering_path, 1800, -400, "_pt"
     )
-    
-    # Simplified scattering lookup (single sample for now - proper interpolation can be added)
-    # Final X = (floor(x_nu * (NU_SIZE-1)) + u_mu_s) / NU_SIZE + depth_slice / DEPTH
-    
-    # Camera scattering UV
-    tex_x_cam = builder.math('MULTIPLY', 3600, 200, 'tex_x_cam', v1=float(SCATTERING_TEXTURE_NU_SIZE - 1))
-    builder.link(x_nu_cam.outputs[0], tex_x_cam.inputs[0])
-    
-    tex_x_floor_cam = builder.math('FLOOR', 3750, 200, 'tex_x_floor_cam')
-    builder.link(tex_x_cam.outputs[0], tex_x_floor_cam.inputs[0])
-    
-    tex_x_plus_mus_cam = builder.math('ADD', 3900, 200, 'tex_x+mus_cam')
-    builder.link(tex_x_floor_cam.outputs[0], tex_x_plus_mus_cam.inputs[0])
-    builder.link(u_mu_s_cam.outputs[0], tex_x_plus_mus_cam.inputs[1])
-    
-    uvw_x_cam = builder.math('DIVIDE', 4050, 200, 'uvw_x_cam', v1=float(SCATTERING_TEXTURE_NU_SIZE))
-    builder.link(tex_x_plus_mus_cam.outputs[0], uvw_x_cam.inputs[0])
-    
-    # Depth slice for camera
-    depth_scaled_cam = builder.math('MULTIPLY', 3600, 150, 'depth_sc_cam', v1=float(SCATTERING_TEXTURE_DEPTH - 1))
-    builder.link(u_r_cam.outputs[0], depth_scaled_cam.inputs[0])
-    
-    depth_floor_cam = builder.math('FLOOR', 3750, 150, 'depth_floor_cam')
-    builder.link(depth_scaled_cam.outputs[0], depth_floor_cam.inputs[0])
-    
-    # Final X = (depth_floor + uvw_x) / DEPTH
-    slice_plus_uvw_cam = builder.math('ADD', 4200, 175, 'slice+uvw_cam')
-    builder.link(depth_floor_cam.outputs[0], slice_plus_uvw_cam.inputs[0])
-    builder.link(uvw_x_cam.outputs[0], slice_plus_uvw_cam.inputs[1])
-    
-    final_x_cam = builder.math('DIVIDE', 4350, 175, 'final_x_cam', v1=float(SCATTERING_TEXTURE_DEPTH))
-    builder.link(slice_plus_uvw_cam.outputs[0], final_x_cam.inputs[0])
-    
-    # Flip Y for camera
-    u_mu_flip_cam = builder.math('SUBTRACT', 4200, 125, 'u_mu_flip_cam', v0=1.0)
-    builder.link(u_mu_cam.outputs[0], u_mu_flip_cam.inputs[1])
-    
-    scat_uv_cam = builder.combine_xyz(4500, 150, 'Scat_UV_Cam')
-    builder.link(final_x_cam.outputs[0], scat_uv_cam.inputs['X'])
-    builder.link(u_mu_flip_cam.outputs[0], scat_uv_cam.inputs['Y'])
-    
-    tex_scat_cam = builder.image_texture(4650, 150, 'Scat_Cam', scattering_path)
-    builder.link(scat_uv_cam.outputs[0], tex_scat_cam.inputs['Vector'])
-    
-    # Point scattering UV (same pattern)
-    tex_x_pt = builder.math('MULTIPLY', 3600, -600, 'tex_x_pt', v1=float(SCATTERING_TEXTURE_NU_SIZE - 1))
-    builder.link(x_nu_pt.outputs[0], tex_x_pt.inputs[0])
-    
-    tex_x_floor_pt = builder.math('FLOOR', 3750, -600, 'tex_x_floor_pt')
-    builder.link(tex_x_pt.outputs[0], tex_x_floor_pt.inputs[0])
-    
-    tex_x_plus_mus_pt = builder.math('ADD', 3900, -600, 'tex_x+mus_pt')
-    builder.link(tex_x_floor_pt.outputs[0], tex_x_plus_mus_pt.inputs[0])
-    builder.link(u_mu_s_pt.outputs[0], tex_x_plus_mus_pt.inputs[1])
-    
-    uvw_x_pt = builder.math('DIVIDE', 4050, -600, 'uvw_x_pt', v1=float(SCATTERING_TEXTURE_NU_SIZE))
-    builder.link(tex_x_plus_mus_pt.outputs[0], uvw_x_pt.inputs[0])
-    
-    depth_scaled_pt = builder.math('MULTIPLY', 3600, -650, 'depth_sc_pt', v1=float(SCATTERING_TEXTURE_DEPTH - 1))
-    builder.link(u_r_pt.outputs[0], depth_scaled_pt.inputs[0])
-    
-    depth_floor_pt = builder.math('FLOOR', 3750, -650, 'depth_floor_pt')
-    builder.link(depth_scaled_pt.outputs[0], depth_floor_pt.inputs[0])
-    
-    slice_plus_uvw_pt = builder.math('ADD', 4200, -625, 'slice+uvw_pt')
-    builder.link(depth_floor_pt.outputs[0], slice_plus_uvw_pt.inputs[0])
-    builder.link(uvw_x_pt.outputs[0], slice_plus_uvw_pt.inputs[1])
-    
-    final_x_pt = builder.math('DIVIDE', 4350, -625, 'final_x_pt', v1=float(SCATTERING_TEXTURE_DEPTH))
-    builder.link(slice_plus_uvw_pt.outputs[0], final_x_pt.inputs[0])
-    
-    u_mu_flip_pt = builder.math('SUBTRACT', 4200, -675, 'u_mu_flip_pt', v0=1.0)
-    builder.link(u_mu_pt.outputs[0], u_mu_flip_pt.inputs[1])
-    
-    scat_uv_pt = builder.combine_xyz(4500, -650, 'Scat_UV_Pt')
-    builder.link(final_x_pt.outputs[0], scat_uv_pt.inputs['X'])
-    builder.link(u_mu_flip_pt.outputs[0], scat_uv_pt.inputs['Y'])
-    
-    tex_scat_pt = builder.image_texture(4650, -650, 'Scat_Pt', scattering_path)
-    builder.link(scat_uv_pt.outputs[0], tex_scat_pt.inputs['Vector'])
     
     # =========================================================================
     # INSCATTER CALCULATION
@@ -806,17 +823,17 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # =========================================================================
     
     # transmittance × S_point
-    t_times_scat = builder.vec_math('MULTIPLY', 4850, -200, 'T×S_pt')
+    t_times_scat = builder.vec_math('MULTIPLY', 5500, -200, 'T×S_pt')
     builder.link(transmittance_final.outputs[0], t_times_scat.inputs[0])
-    builder.link(tex_scat_pt.outputs['Color'], t_times_scat.inputs[1])
+    builder.link(scat_pt_color, t_times_scat.inputs[1])
     
     # S_cam - T × S_point
-    inscatter_raw = builder.vec_math('SUBTRACT', 5000, 0, 'Inscatter_Raw')
-    builder.link(tex_scat_cam.outputs['Color'], inscatter_raw.inputs[0])
+    inscatter_raw = builder.vec_math('SUBTRACT', 5650, 0, 'Inscatter_Raw')
+    builder.link(scat_cam_color, inscatter_raw.inputs[0])
     builder.link(t_times_scat.outputs[0], inscatter_raw.inputs[1])
     
     # Clamp negative values
-    inscatter_max = builder.vec_math('MAXIMUM', 5150, 0, 'Inscatter_Clamp')
+    inscatter_max = builder.vec_math('MAXIMUM', 5800, 0, 'Inscatter_Clamp')
     inscatter_max.inputs[1].default_value = (0.0, 0.0, 0.0)
     builder.link(inscatter_raw.outputs[0], inscatter_max.inputs[0])
     
@@ -825,18 +842,18 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # =========================================================================
     
     # Rayleigh phase: 3/(16π) × (1 + ν²)
-    nu_sq = builder.math('MULTIPLY', 4850, -400, 'ν²')
+    nu_sq = builder.math('MULTIPLY', 5500, -400, 'ν²')
     builder.link(nu.outputs['Value'], nu_sq.inputs[0])
     builder.link(nu.outputs['Value'], nu_sq.inputs[1])
     
-    one_plus_nu_sq = builder.math('ADD', 5000, -400, '1+ν²', v0=1.0)
+    one_plus_nu_sq = builder.math('ADD', 5650, -400, '1+ν²', v0=1.0)
     builder.link(nu_sq.outputs[0], one_plus_nu_sq.inputs[1])
     
-    rayleigh_phase = builder.math('MULTIPLY', 5150, -400, 'Ray_Phase', v0=3.0 / (16.0 * math.pi))
+    rayleigh_phase = builder.math('MULTIPLY', 5800, -400, 'Ray_Phase', v0=3.0 / (16.0 * math.pi))
     builder.link(one_plus_nu_sq.outputs[0], rayleigh_phase.inputs[1])
     
     # Apply phase function to inscatter
-    inscatter_phased = builder.vec_math('SCALE', 5300, -100, 'Inscatter_Phased')
+    inscatter_phased = builder.vec_math('SCALE', 5950, -100, 'Inscatter_Phased')
     builder.link(inscatter_max.outputs[0], inscatter_phased.inputs[0])
     builder.link(rayleigh_phase.outputs[0], inscatter_phased.inputs['Scale'])
     
