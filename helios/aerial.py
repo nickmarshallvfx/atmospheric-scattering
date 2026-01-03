@@ -137,8 +137,13 @@ def add_aerial_to_material(material, context):
     
     The AOVs can then be composited: beauty * transmittance + inscatter
     """
-    if material is None or not material.use_nodes:
+    if material is None:
         return False
+    
+    # Enable nodes if not already enabled (needed for default materials)
+    if not material.use_nodes:
+        material.use_nodes = True
+        print(f"Helios: Enabled nodes for material '{material.name}'")
     
     settings = context.scene.helios
     
