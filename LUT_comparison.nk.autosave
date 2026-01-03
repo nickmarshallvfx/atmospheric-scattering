@@ -15,7 +15,7 @@ define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
                     <page id="Viewer.1"/>
                 </dock>
                 <split size="449"/>
-                <dock id="" activePageId="DAG.1" focus="true">
+                <dock id="" activePageId="DAG.1">
                     <page id="DAG.1"/>
                     <page id="Curve Editor.1"/>
                     <page id="DopeSheet.1"/>
@@ -312,6 +312,44 @@ Shuffle2 {
 Read {
  inputs 0
  file_type exr
+ file c:/Users/space/OneDrive/Desktop/nodeBased_8degElev.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ version 9
+ raw true
+ name Read12
+ xpos 840
+ ypos -279
+}
+set N3a458400 [stack 0]
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Combined
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle12
+ xpos 789
+ ypos -129
+}
+push $N3a458400
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Helios_Sky
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle11
+ xpos 897
+ ypos -129
+}
+Merge2 {
+ inputs 2
+ name Merge3
+ xpos 932
+ ypos -82
+}
+Read {
+ inputs 0
+ file_type exr
  file c:/Users/space/OneDrive/Desktop/OSL_8degElev.exr
  format "960 540 0 0 960 540 1 "
  origset true
@@ -349,40 +387,114 @@ Merge2 {
 Read {
  inputs 0
  file_type exr
- file c:/Users/space/OneDrive/Desktop/nodeBased_8degElev.exr
+ file c:/Users/space/OneDrive/Desktop/atmosphere_test_v001.exr
  format "960 540 0 0 960 540 1 "
  origset true
- version 9
  raw true
- name Read12
- xpos 840
- ypos -279
+ name Read11
+ xpos 1390
+ ypos -381
 }
-set N3a458400 [stack 0]
+set N39360c00 [stack 0]
+push $N39360c00
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Environment
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Environment.red 0 0 rgba.red 0 0 ViewLayer_Environment.green 0 1 rgba.green 0 1 ViewLayer_Environment.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle14
+ xpos 1280
+ ypos 87
+}
+push $N39360c00
 Shuffle2 {
  fromInput1 {{0} B}
  in1 ViewLayer_Combined
  fromInput2 {{0} B}
  mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
- name Shuffle12
- xpos 789
- ypos -129
+ name Shuffle17
+ xpos 1297
+ ypos -297
 }
-push $N3a458400
+Dot {
+ name Dot1
+ xpos 1331
+ ypos 17
+}
+push $N39360c00
+Unpremult {
+ channels all
+ alpha ViewLayer_Combined.alpha
+ name Unpremult1
+ xpos 1390
+ ypos -255
+}
+set N39a89000 [stack 0]
+add_layer {ViewLayer_Helios_Inscatter ViewLayer_Helios_Inscatter.red ViewLayer_Helios_Inscatter.green ViewLayer_Helios_Inscatter.blue ViewLayer_Helios_Inscatter.alpha}
 Shuffle2 {
  fromInput1 {{0} B}
- in1 ViewLayer_Helios_Sky
+ in1 ViewLayer_Helios_Inscatter
  fromInput2 {{0} B}
- mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
- name Shuffle11
- xpos 897
+ mappings "4 ViewLayer_Helios_Inscatter.red 0 0 rgba.red 0 0 ViewLayer_Helios_Inscatter.green 0 1 rgba.green 0 1 ViewLayer_Helios_Inscatter.blue 0 2 rgba.blue 0 2 ViewLayer_Helios_Inscatter.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle16
+ xpos 1610
+ ypos -177
+}
+push $N39a89000
+add_layer {ViewLayer_Helios_Transmittance ViewLayer_Helios_Transmittance.red ViewLayer_Helios_Transmittance.green ViewLayer_Helios_Transmittance.blue ViewLayer_Helios_Transmittance.alpha}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Helios_Transmittance
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Helios_Transmittance.red 0 0 rgba.red 0 0 ViewLayer_Helios_Transmittance.green 0 1 rgba.green 0 1 ViewLayer_Helios_Transmittance.blue 0 2 rgba.blue 0 2 ViewLayer_Helios_Transmittance.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle15
+ xpos 1500
+ ypos -177
+}
+push $N39a89000
+add_layer {ViewLayer_Noisy_Image ViewLayer_Noisy_Image.red ViewLayer_Noisy_Image.green ViewLayer_Noisy_Image.blue ViewLayer_Noisy_Image.alpha}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Noisy_Image
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Noisy_Image.red 0 0 rgba.red 0 0 ViewLayer_Noisy_Image.green 0 1 rgba.green 0 1 ViewLayer_Noisy_Image.blue 0 2 rgba.blue 0 2 ViewLayer_Noisy_Image.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle13
+ xpos 1390
+ ypos -201
+}
+Merge2 {
+ inputs 2
+ operation multiply
+ name Merge6
+ xpos 1390
  ypos -129
 }
 Merge2 {
  inputs 2
- name Merge3
- xpos 932
- ypos -82
+ operation plus
+ name Merge7
+ selected true
+ xpos 1390
+ ypos -81
+}
+Copy {
+ inputs 2
+ from0 rgba.alpha
+ to0 rgba.alpha
+ name Copy1
+ xpos 1390
+ ypos 9
+}
+Premult {
+ name Premult1
+ xpos 1390
+ ypos 45
+}
+Merge2 {
+ inputs 2
+ name Merge5
+ xpos 1390
+ ypos 87
 }
 Viewer {
  inputs 2
@@ -393,7 +505,6 @@ Viewer {
    }
  monitorOutOutputTransform rec709
  name Viewer1
- selected true
  xpos -40
  ypos -9
 }

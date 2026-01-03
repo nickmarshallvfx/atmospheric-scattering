@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 22  # MAJOR FIX: Correct u_mu formula for ground rays + transmittance negation
+AERIAL_NODE_VERSION = 23  # DEBUG: Output u_mu and ray_intersects_ground to diagnose horizon discontinuity
 
 
 # =============================================================================
@@ -1153,8 +1153,21 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # =========================================================================
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
-    # Restore proper inscatter output with phase function
-    builder.link(inscatter_phased.outputs[0], group_output.inputs['Inscatter'])
+    
+    # DEBUG V23: Output mu, ray_intersects_ground, and u_mu as RGB to diagnose horizon
+    # R = mu (clamped to 0-1 as (mu+1)/2), G = ray_intersects_ground, B = 0
+    mu_debug = builder.math('ADD', 6100, 100, 'mu_debug', v1=1.0)
+    builder.link(mu_final.outputs[0], mu_debug.inputs[0])
+    mu_debug_scaled = builder.math('MULTIPLY', 6250, 100, 'mu_debug_scaled', v1=0.5)
+    builder.link(mu_debug.outputs[0], mu_debug_scaled.inputs[0])
+    
+    debug_output = builder.combine_xyz(6400, 50, 'Debug_Output')
+    builder.link(mu_debug_scaled.outputs[0], debug_output.inputs['X'])  # R = mu mapped to 0-1
+    builder.link(ray_intersects_ground.outputs[0], debug_output.inputs['Y'])  # G = ground flag
+    # Z = 0 (default)
+    
+    # Output debug for now - shows mu (red) and ground flag (green)
+    builder.link(debug_output.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
