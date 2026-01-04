@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 29  # DEBUG: Output S_cam.b, T.b, S_pt.b separately to isolate spike source
+AERIAL_NODE_VERSION = 30  # FIX: Always use non-ground transmittance formula (ground formula causes discontinuity)
 
 # Minimum virtual camera altitude for atmospheric calculations (km)
 # This prevents degenerate cases when camera is at planet surface
@@ -1019,74 +1019,21 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(sep_cam_ng.outputs['Blue'], T_ng_b.inputs[0])
     builder.link(pt_ng_safe_b.outputs[0], T_ng_b.inputs[1])
     
-    # --- GROUND PATH: T(r_p, -mu_p) / T(r, -mu) ---
-    trans_uv_cam_g = create_transmittance_uv(
-        builder, r.outputs[0], neg_mu.outputs[0], 
-        -400, 300, "_cam_g"
-    )
-    trans_uv_pt_g = create_transmittance_uv(
-        builder, r_p.outputs[0], neg_mu_p.outputs[0],
-        -400, 100, "_pt_g"
-    )
-    
-    tex_trans_cam_g = builder.image_texture(800, 300, 'T_cam_g', transmittance_path)
-    builder.link(trans_uv_cam_g, tex_trans_cam_g.inputs['Vector'])
-    
-    tex_trans_pt_g = builder.image_texture(800, 100, 'T_pt_g', transmittance_path)
-    builder.link(trans_uv_pt_g, tex_trans_pt_g.inputs['Vector'])
-    
-    # T_g = T_pt(-mu_p) / T_cam(-mu) (ground - SWAPPED!)
-    sep_cam_g = builder.nodes.new('ShaderNodeSeparateColor')
-    sep_cam_g.location = (950, 300)
-    sep_cam_g.name = 'Sep_T_cam_g'
-    builder.link(tex_trans_cam_g.outputs['Color'], sep_cam_g.inputs['Color'])
-    
-    sep_pt_g = builder.nodes.new('ShaderNodeSeparateColor')
-    sep_pt_g.location = (950, 100)
-    sep_pt_g.name = 'Sep_T_pt_g'
-    builder.link(tex_trans_pt_g.outputs['Color'], sep_pt_g.inputs['Color'])
-    
-    # Safe division for ground (T_pt / T_cam - swapped!)
-    cam_g_safe_r = builder.math('MAXIMUM', 1100, 350, 'T_cam_g_safe_r', v1=0.0001)
-    builder.link(sep_cam_g.outputs['Red'], cam_g_safe_r.inputs[0])
-    cam_g_safe_g = builder.math('MAXIMUM', 1100, 300, 'T_cam_g_safe_g', v1=0.0001)
-    builder.link(sep_cam_g.outputs['Green'], cam_g_safe_g.inputs[0])
-    cam_g_safe_b = builder.math('MAXIMUM', 1100, 250, 'T_cam_g_safe_b', v1=0.0001)
-    builder.link(sep_cam_g.outputs['Blue'], cam_g_safe_b.inputs[0])
-    
-    T_g_r = builder.math('DIVIDE', 1250, 350, 'T_g_r')
-    builder.link(sep_pt_g.outputs['Red'], T_g_r.inputs[0])
-    builder.link(cam_g_safe_r.outputs[0], T_g_r.inputs[1])
-    T_g_g = builder.math('DIVIDE', 1250, 300, 'T_g_g')
-    builder.link(sep_pt_g.outputs['Green'], T_g_g.inputs[0])
-    builder.link(cam_g_safe_g.outputs[0], T_g_g.inputs[1])
-    T_g_b = builder.math('DIVIDE', 1250, 250, 'T_g_b')
-    builder.link(sep_pt_g.outputs['Blue'], T_g_b.inputs[0])
-    builder.link(cam_g_safe_b.outputs[0], T_g_b.inputs[1])
-    
-    # --- SELECT based on ray_intersects_ground ---
-    T_sel_r = builder.mix('FLOAT', 'MIX', 1400, 500, 'T_sel_r')
-    builder.link(ray_intersects_ground.outputs[0], T_sel_r.inputs['Factor'])
-    builder.link(T_ng_r.outputs[0], T_sel_r.inputs[2])  # A = non-ground
-    builder.link(T_g_r.outputs[0], T_sel_r.inputs[3])   # B = ground
-    
-    T_sel_g = builder.mix('FLOAT', 'MIX', 1400, 450, 'T_sel_g')
-    builder.link(ray_intersects_ground.outputs[0], T_sel_g.inputs['Factor'])
-    builder.link(T_ng_g.outputs[0], T_sel_g.inputs[2])
-    builder.link(T_g_g.outputs[0], T_sel_g.inputs[3])
-    
-    T_sel_b = builder.mix('FLOAT', 'MIX', 1400, 400, 'T_sel_b')
-    builder.link(ray_intersects_ground.outputs[0], T_sel_b.inputs['Factor'])
-    builder.link(T_ng_b.outputs[0], T_sel_b.inputs[2])
-    builder.link(T_g_b.outputs[0], T_sel_b.inputs[3])
+    # -------------------------------------------------------------------------
+    # FIX V30: ALWAYS use non-ground transmittance formula
+    # The ground formula (with negated mu and swapped division) is designed for
+    # rays that travel INTO the planet during precomputation. For aerial
+    # perspective on scene geometry, we never actually go through the planet,
+    # so the non-ground formula is always correct and avoids the discontinuity.
+    # -------------------------------------------------------------------------
     
     # Clamp to [0, 1]
     trans_r_clamp = builder.math('MINIMUM', 1550, 500, 'T_r_clamp', v1=1.0)
-    builder.link(T_sel_r.outputs[0], trans_r_clamp.inputs[0])
+    builder.link(T_ng_r.outputs[0], trans_r_clamp.inputs[0])
     trans_g_clamp = builder.math('MINIMUM', 1550, 450, 'T_g_clamp', v1=1.0)
-    builder.link(T_sel_g.outputs[0], trans_g_clamp.inputs[0])
+    builder.link(T_ng_g.outputs[0], trans_g_clamp.inputs[0])
     trans_b_clamp = builder.math('MINIMUM', 1550, 400, 'T_b_clamp', v1=1.0)
-    builder.link(T_sel_b.outputs[0], trans_b_clamp.inputs[0])
+    builder.link(T_ng_b.outputs[0], trans_b_clamp.inputs[0])
     
     # Combine back to color
     transmittance_final = builder.combine_xyz(1700, 450, 'Transmittance_Final')
@@ -1168,32 +1115,8 @@ def create_aerial_perspective_node_group(lut_dir=None):
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
     
-    # DEBUG V29: Output components separately to isolate which causes the spike
-    # R = S_cam blue, G = T blue, B = S_pt blue
-    # At junction: if R spikes, S_cam lookup is wrong
-    #              if G drops, T formula is wrong
-    #              if B drops, S_pt lookup is wrong
-    sep_scam = builder.nodes.new('ShaderNodeSeparateColor')
-    sep_scam.location = (6000, 100)
-    sep_scam.name = 'Sep_S_cam'
-    builder.link(scat_cam_color, sep_scam.inputs['Color'])
-    
-    sep_spt = builder.nodes.new('ShaderNodeSeparateColor')
-    sep_spt.location = (6000, 0)
-    sep_spt.name = 'Sep_S_pt'
-    builder.link(scat_pt_color, sep_spt.inputs['Color'])
-    
-    sep_trans = builder.nodes.new('ShaderNodeSeparateColor')
-    sep_trans.location = (6000, -100)
-    sep_trans.name = 'Sep_Trans'
-    builder.link(transmittance_final.outputs[0], sep_trans.inputs['Color'])
-    
-    debug_components = builder.combine_xyz(6200, 0, 'Debug_Components')
-    builder.link(sep_scam.outputs['Blue'], debug_components.inputs['X'])  # R = S_cam.b
-    builder.link(sep_trans.outputs['Blue'], debug_components.inputs['Y'])  # G = T.b
-    builder.link(sep_spt.outputs['Blue'], debug_components.inputs['Z'])  # B = S_pt.b
-    
-    builder.link(debug_components.outputs[0], group_output.inputs['Inscatter'])
+    # Output proper inscatter with phase function applied
+    builder.link(inscatter_phased.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
