@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 28  # DEBUG: Output raw inscatter (before phase) to diagnose saturated blue
+AERIAL_NODE_VERSION = 29  # DEBUG: Output S_cam.b, T.b, S_pt.b separately to isolate spike source
 
 # Minimum virtual camera altitude for atmospheric calculations (km)
 # This prevents degenerate cases when camera is at planet surface
@@ -1168,9 +1168,32 @@ def create_aerial_perspective_node_group(lut_dir=None):
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
     
-    # DEBUG V28: Output RAW inscatter (before phase function) to see if saturation is from scattering or phase
-    # This helps diagnose whether the saturated blue is in the LUT or the calculation
-    builder.link(inscatter_max.outputs[0], group_output.inputs['Inscatter'])
+    # DEBUG V29: Output components separately to isolate which causes the spike
+    # R = S_cam blue, G = T blue, B = S_pt blue
+    # At junction: if R spikes, S_cam lookup is wrong
+    #              if G drops, T formula is wrong
+    #              if B drops, S_pt lookup is wrong
+    sep_scam = builder.nodes.new('ShaderNodeSeparateColor')
+    sep_scam.location = (6000, 100)
+    sep_scam.name = 'Sep_S_cam'
+    builder.link(scat_cam_color, sep_scam.inputs['Color'])
+    
+    sep_spt = builder.nodes.new('ShaderNodeSeparateColor')
+    sep_spt.location = (6000, 0)
+    sep_spt.name = 'Sep_S_pt'
+    builder.link(scat_pt_color, sep_spt.inputs['Color'])
+    
+    sep_trans = builder.nodes.new('ShaderNodeSeparateColor')
+    sep_trans.location = (6000, -100)
+    sep_trans.name = 'Sep_Trans'
+    builder.link(transmittance_final.outputs[0], sep_trans.inputs['Color'])
+    
+    debug_components = builder.combine_xyz(6200, 0, 'Debug_Components')
+    builder.link(sep_scam.outputs['Blue'], debug_components.inputs['X'])  # R = S_cam.b
+    builder.link(sep_trans.outputs['Blue'], debug_components.inputs['Y'])  # G = T.b
+    builder.link(sep_spt.outputs['Blue'], debug_components.inputs['Z'])  # B = S_pt.b
+    
+    builder.link(debug_components.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
