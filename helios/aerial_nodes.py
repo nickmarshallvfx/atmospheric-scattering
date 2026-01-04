@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 34  # FIX: Use MIN of both transmittance formulas (valid one will be lower)
+AERIAL_NODE_VERSION = 35  # BASELINE: Revert to original ray_intersects_ground switch for validation
 
 # Minimum virtual camera altitude for atmospheric calculations (km)
 # This prevents degenerate cases when camera is at planet surface
@@ -1070,22 +1070,23 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(sep_pt_g.outputs['Blue'], T_g_b.inputs[0])
     builder.link(cam_g_safe_b.outputs[0], T_g_b.inputs[1])
     
-    # --- USE MINIMUM of both formulas ---
-    # Physical constraint: T must be in [0, 1]
-    # The "wrong" formula for a given region often produces T > 1
-    # By taking MIN, we automatically get the valid formula's result
+    # --- SELECT based on ray_intersects_ground (original Bruneton approach) ---
+    # This is the reference implementation's approach
     
-    T_sel_r = builder.math('MINIMUM', 1400, 550, 'T_sel_r')
-    builder.link(T_ng_r.outputs[0], T_sel_r.inputs[0])
-    builder.link(T_g_r.outputs[0], T_sel_r.inputs[1])
+    T_sel_r = builder.mix('FLOAT', 'MIX', 1400, 550, 'T_sel_r')
+    builder.link(ray_intersects_ground.outputs[0], T_sel_r.inputs['Factor'])
+    builder.link(T_ng_r.outputs[0], T_sel_r.inputs[2])  # A = non-ground (factor=0)
+    builder.link(T_g_r.outputs[0], T_sel_r.inputs[3])   # B = ground (factor=1)
     
-    T_sel_g = builder.math('MINIMUM', 1400, 500, 'T_sel_g')
-    builder.link(T_ng_g.outputs[0], T_sel_g.inputs[0])
-    builder.link(T_g_g.outputs[0], T_sel_g.inputs[1])
+    T_sel_g = builder.mix('FLOAT', 'MIX', 1400, 500, 'T_sel_g')
+    builder.link(ray_intersects_ground.outputs[0], T_sel_g.inputs['Factor'])
+    builder.link(T_ng_g.outputs[0], T_sel_g.inputs[2])
+    builder.link(T_g_g.outputs[0], T_sel_g.inputs[3])
     
-    T_sel_b = builder.math('MINIMUM', 1400, 450, 'T_sel_b')
-    builder.link(T_ng_b.outputs[0], T_sel_b.inputs[0])
-    builder.link(T_g_b.outputs[0], T_sel_b.inputs[1])
+    T_sel_b = builder.mix('FLOAT', 'MIX', 1400, 450, 'T_sel_b')
+    builder.link(ray_intersects_ground.outputs[0], T_sel_b.inputs['Factor'])
+    builder.link(T_ng_b.outputs[0], T_sel_b.inputs[2])
+    builder.link(T_g_b.outputs[0], T_sel_b.inputs[3])
     
     # Clamp to [0, 1]
     trans_r_clamp = builder.math('MINIMUM', 1700, 550, 'T_r_clamp', v1=1.0)
