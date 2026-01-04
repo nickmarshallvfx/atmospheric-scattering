@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 30  # FIX: Always use non-ground transmittance formula (ground formula causes discontinuity)
+AERIAL_NODE_VERSION = 31  # FIX: Always use GROUND transmittance formula (looking up from both points)
 
 # Minimum virtual camera altitude for atmospheric calculations (km)
 # This prevents degenerate cases when camera is at planet surface
@@ -974,66 +974,65 @@ def create_aerial_perspective_node_group(lut_dir=None):
     neg_mu_p = builder.math('MULTIPLY', -600, 400, '-μ_p', v1=-1.0)
     builder.link(mu_p_final.outputs[0], neg_mu_p.inputs[0])
     
-    # --- NON-GROUND PATH: T(r, mu) / T(r_p, mu_p) ---
-    trans_uv_cam_ng = create_transmittance_uv(
-        builder, r.outputs[0], mu_final.outputs[0], 
-        -400, 700, "_cam_ng"
-    )
-    trans_uv_pt_ng = create_transmittance_uv(
-        builder, r_p.outputs[0], mu_p_final.outputs[0],
-        -400, 500, "_pt_ng"
-    )
-    
-    tex_trans_cam_ng = builder.image_texture(800, 700, 'T_cam_ng', transmittance_path)
-    builder.link(trans_uv_cam_ng, tex_trans_cam_ng.inputs['Vector'])
-    
-    tex_trans_pt_ng = builder.image_texture(800, 500, 'T_pt_ng', transmittance_path)
-    builder.link(trans_uv_pt_ng, tex_trans_pt_ng.inputs['Vector'])
-    
-    # T_ng = T_cam / T_pt (non-ground)
-    sep_cam_ng = builder.nodes.new('ShaderNodeSeparateColor')
-    sep_cam_ng.location = (950, 700)
-    sep_cam_ng.name = 'Sep_T_cam_ng'
-    builder.link(tex_trans_cam_ng.outputs['Color'], sep_cam_ng.inputs['Color'])
-    
-    sep_pt_ng = builder.nodes.new('ShaderNodeSeparateColor')
-    sep_pt_ng.location = (950, 500)
-    sep_pt_ng.name = 'Sep_T_pt_ng'
-    builder.link(tex_trans_pt_ng.outputs['Color'], sep_pt_ng.inputs['Color'])
-    
-    # Safe division for non-ground (T_cam / T_pt)
-    pt_ng_safe_r = builder.math('MAXIMUM', 1100, 550, 'T_pt_ng_safe_r', v1=0.0001)
-    builder.link(sep_pt_ng.outputs['Red'], pt_ng_safe_r.inputs[0])
-    pt_ng_safe_g = builder.math('MAXIMUM', 1100, 500, 'T_pt_ng_safe_g', v1=0.0001)
-    builder.link(sep_pt_ng.outputs['Green'], pt_ng_safe_g.inputs[0])
-    pt_ng_safe_b = builder.math('MAXIMUM', 1100, 450, 'T_pt_ng_safe_b', v1=0.0001)
-    builder.link(sep_pt_ng.outputs['Blue'], pt_ng_safe_b.inputs[0])
-    
-    T_ng_r = builder.math('DIVIDE', 1250, 550, 'T_ng_r')
-    builder.link(sep_cam_ng.outputs['Red'], T_ng_r.inputs[0])
-    builder.link(pt_ng_safe_r.outputs[0], T_ng_r.inputs[1])
-    T_ng_g = builder.math('DIVIDE', 1250, 500, 'T_ng_g')
-    builder.link(sep_cam_ng.outputs['Green'], T_ng_g.inputs[0])
-    builder.link(pt_ng_safe_g.outputs[0], T_ng_g.inputs[1])
-    T_ng_b = builder.math('DIVIDE', 1250, 450, 'T_ng_b')
-    builder.link(sep_cam_ng.outputs['Blue'], T_ng_b.inputs[0])
-    builder.link(pt_ng_safe_b.outputs[0], T_ng_b.inputs[1])
-    
     # -------------------------------------------------------------------------
-    # FIX V30: ALWAYS use non-ground transmittance formula
-    # The ground formula (with negated mu and swapped division) is designed for
-    # rays that travel INTO the planet during precomputation. For aerial
-    # perspective on scene geometry, we never actually go through the planet,
-    # so the non-ground formula is always correct and avoids the discontinuity.
+    # FIX V31: ALWAYS use GROUND transmittance formula
+    # T = T(r_p, -mu_p) / T(r, -mu)
+    # This uses "looking up" direction from both camera and point positions.
+    # The upward-looking transmittance is well-defined everywhere and avoids
+    # the discontinuity at the horizon boundary.
     # -------------------------------------------------------------------------
+    
+    trans_uv_cam = create_transmittance_uv(
+        builder, r.outputs[0], neg_mu.outputs[0], 
+        -400, 700, "_cam"
+    )
+    trans_uv_pt = create_transmittance_uv(
+        builder, r_p.outputs[0], neg_mu_p.outputs[0],
+        -400, 500, "_pt"
+    )
+    
+    tex_trans_cam = builder.image_texture(800, 700, 'T_cam', transmittance_path)
+    builder.link(trans_uv_cam, tex_trans_cam.inputs['Vector'])
+    
+    tex_trans_pt = builder.image_texture(800, 500, 'T_pt', transmittance_path)
+    builder.link(trans_uv_pt, tex_trans_pt.inputs['Vector'])
+    
+    # T = T_pt(-mu_p) / T_cam(-mu) - swapped division order
+    sep_cam = builder.nodes.new('ShaderNodeSeparateColor')
+    sep_cam.location = (950, 700)
+    sep_cam.name = 'Sep_T_cam'
+    builder.link(tex_trans_cam.outputs['Color'], sep_cam.inputs['Color'])
+    
+    sep_pt = builder.nodes.new('ShaderNodeSeparateColor')
+    sep_pt.location = (950, 500)
+    sep_pt.name = 'Sep_T_pt'
+    builder.link(tex_trans_pt.outputs['Color'], sep_pt.inputs['Color'])
+    
+    # Safe division: T_pt / T_cam (note: swapped from non-ground formula)
+    cam_safe_r = builder.math('MAXIMUM', 1100, 550, 'T_cam_safe_r', v1=0.0001)
+    builder.link(sep_cam.outputs['Red'], cam_safe_r.inputs[0])
+    cam_safe_g = builder.math('MAXIMUM', 1100, 500, 'T_cam_safe_g', v1=0.0001)
+    builder.link(sep_cam.outputs['Green'], cam_safe_g.inputs[0])
+    cam_safe_b = builder.math('MAXIMUM', 1100, 450, 'T_cam_safe_b', v1=0.0001)
+    builder.link(sep_cam.outputs['Blue'], cam_safe_b.inputs[0])
+    
+    T_r = builder.math('DIVIDE', 1250, 550, 'T_r')
+    builder.link(sep_pt.outputs['Red'], T_r.inputs[0])  # T_pt in numerator
+    builder.link(cam_safe_r.outputs[0], T_r.inputs[1])  # T_cam in denominator
+    T_g = builder.math('DIVIDE', 1250, 500, 'T_g')
+    builder.link(sep_pt.outputs['Green'], T_g.inputs[0])
+    builder.link(cam_safe_g.outputs[0], T_g.inputs[1])
+    T_b = builder.math('DIVIDE', 1250, 450, 'T_b')
+    builder.link(sep_pt.outputs['Blue'], T_b.inputs[0])
+    builder.link(cam_safe_b.outputs[0], T_b.inputs[1])
     
     # Clamp to [0, 1]
     trans_r_clamp = builder.math('MINIMUM', 1550, 500, 'T_r_clamp', v1=1.0)
-    builder.link(T_ng_r.outputs[0], trans_r_clamp.inputs[0])
+    builder.link(T_r.outputs[0], trans_r_clamp.inputs[0])
     trans_g_clamp = builder.math('MINIMUM', 1550, 450, 'T_g_clamp', v1=1.0)
-    builder.link(T_ng_g.outputs[0], trans_g_clamp.inputs[0])
+    builder.link(T_g.outputs[0], trans_g_clamp.inputs[0])
     trans_b_clamp = builder.math('MINIMUM', 1550, 400, 'T_b_clamp', v1=1.0)
-    builder.link(T_ng_b.outputs[0], trans_b_clamp.inputs[0])
+    builder.link(T_b.outputs[0], trans_b_clamp.inputs[0])
     
     # Combine back to color
     transmittance_final = builder.combine_xyz(1700, 450, 'Transmittance_Final')
