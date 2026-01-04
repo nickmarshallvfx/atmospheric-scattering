@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 36  # FIX: Use only NON-GROUND scattering (scene never penetrates planet)
+AERIAL_NODE_VERSION = 37  # FIX: Blend scattering from both texture halves near horizon
 
 # Minimum virtual camera altitude for atmospheric calculations (km)
 # This prevents degenerate cases when camera is at planet surface
@@ -274,24 +274,18 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
     """
     Sample scattering texture with proper depth slice interpolation.
     
-    Args:
-        ray_intersects_ground_socket: If provided, uses this to select u_mu formula.
-                                      Must be same for camera and point lookups per reference.
-        return_u_mu: If True, returns (color_socket, u_mu_socket, u_mu_ground_socket) for debugging.
+    V37: Always samples BOTH texture halves and blends based on mu proximity to horizon.
+    This avoids the hard discontinuity when ray_intersects_ground switches.
     
     Returns the interpolated scattering color socket (or tuple if return_u_mu=True).
     """
-    # First compute all UV components (now also returns u_mu_ground for debugging)
-    u_r, u_mu, u_mu_s, x_nu, u_mu_ground_debug = _compute_scattering_uvwz(
+    # Compute all UV components - get BOTH non-ground and ground u_mu values
+    u_r, u_mu_ng, u_mu_s, x_nu, u_mu_g = _compute_scattering_uvwz(
         builder, r_socket, mu_socket, mu_s_socket, nu_socket,
-        base_x, base_y, suffix, ray_intersects_ground_socket
+        base_x, base_y, suffix, None  # None = non-ground by default, but we get ground from return
     )
     
-    # Store u_mu for potential debug output
-    u_mu_for_debug = u_mu
-    u_mu_ground_for_debug = u_mu_ground_debug
-    
-    # Compute nu slice index and fraction
+    # Compute nu slice index and fraction (shared by both samples)
     tex_coord_x = builder.math('MULTIPLY', base_x + 2400, base_y, f'tex_x{suffix}', 
                                v1=float(SCATTERING_TEXTURE_NU_SIZE - 1))
     builder.link(x_nu.outputs[0], tex_coord_x.inputs[0])
@@ -299,7 +293,6 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
     tex_x_floor = builder.math('FLOOR', base_x + 2550, base_y, f'tex_x_floor{suffix}')
     builder.link(tex_coord_x.outputs[0], tex_x_floor.inputs[0])
     
-    # uvw_x = (tex_x + u_mu_s) / NU_SIZE
     tex_x_plus_mus = builder.math('ADD', base_x + 2700, base_y, f'tex_x+mus{suffix}')
     builder.link(tex_x_floor.outputs[0], tex_x_plus_mus.inputs[0])
     builder.link(u_mu_s.outputs[0], tex_x_plus_mus.inputs[1])
@@ -308,7 +301,7 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
                          v1=float(SCATTERING_TEXTURE_NU_SIZE))
     builder.link(tex_x_plus_mus.outputs[0], uvw_x.inputs[0])
     
-    # Compute depth slice indices and fraction
+    # Compute depth slice indices and fraction (shared)
     depth_scaled = builder.math('MULTIPLY', base_x + 2400, base_y - 100, f'depth_sc{suffix}', 
                                 v1=float(SCATTERING_TEXTURE_DEPTH - 1))
     builder.link(u_r.outputs[0], depth_scaled.inputs[0])
@@ -320,7 +313,6 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
     builder.link(depth_scaled.outputs[0], depth_frac.inputs[0])
     builder.link(depth_floor.outputs[0], depth_frac.inputs[1])
     
-    # Depth ceil (clamped)
     depth_ceil = builder.math('ADD', base_x + 2550, base_y - 150, f'depth_ceil{suffix}', v1=1.0)
     builder.link(depth_floor.outputs[0], depth_ceil.inputs[0])
     
@@ -328,7 +320,7 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
                                     v1=float(SCATTERING_TEXTURE_DEPTH - 1))
     builder.link(depth_ceil.outputs[0], depth_ceil_clamp.inputs[0])
     
-    # Compute final X for floor depth slice
+    # Compute final X coordinates (shared)
     slice0_plus_uvw = builder.math('ADD', base_x + 3000, base_y, f'slice0+uvw{suffix}')
     builder.link(depth_floor.outputs[0], slice0_plus_uvw.inputs[0])
     builder.link(uvw_x.outputs[0], slice0_plus_uvw.inputs[1])
@@ -337,7 +329,6 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
                             v1=float(SCATTERING_TEXTURE_DEPTH))
     builder.link(slice0_plus_uvw.outputs[0], final_x0.inputs[0])
     
-    # Compute final X for ceil depth slice
     slice1_plus_uvw = builder.math('ADD', base_x + 3000, base_y - 150, f'slice1+uvw{suffix}')
     builder.link(depth_ceil_clamp.outputs[0], slice1_plus_uvw.inputs[0])
     builder.link(uvw_x.outputs[0], slice1_plus_uvw.inputs[1])
@@ -346,35 +337,70 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
                             v1=float(SCATTERING_TEXTURE_DEPTH))
     builder.link(slice1_plus_uvw.outputs[0], final_x1.inputs[0])
     
-    # Y coordinate - flip for Blender texture convention (matches sky_nodes.py)
-    u_mu_flip = builder.math('SUBTRACT', base_x + 3150, base_y - 50, f'u_mu_flip{suffix}', v0=1.0)
-    builder.link(u_mu.outputs[0], u_mu_flip.inputs[1])
+    # =========================================================================
+    # V37: Sample BOTH texture halves and blend
+    # =========================================================================
     
-    # Sample depth slice 0
-    uv0 = builder.combine_xyz(base_x + 3300, base_y, f'UV0{suffix}')
-    builder.link(final_x0.outputs[0], uv0.inputs['X'])
-    builder.link(u_mu_flip.outputs[0], uv0.inputs['Y'])
+    # --- NON-GROUND samples (u_mu_ng) ---
+    u_mu_ng_flip = builder.math('SUBTRACT', base_x + 3150, base_y + 100, f'u_mu_ng_flip{suffix}', v0=1.0)
+    builder.link(u_mu_ng.outputs[0], u_mu_ng_flip.inputs[1])
     
-    tex0 = builder.image_texture(base_x + 3450, base_y, f'Scat0{suffix}', scattering_path)
-    builder.link(uv0.outputs[0], tex0.inputs['Vector'])
+    uv0_ng = builder.combine_xyz(base_x + 3300, base_y + 100, f'UV0_ng{suffix}')
+    builder.link(final_x0.outputs[0], uv0_ng.inputs['X'])
+    builder.link(u_mu_ng_flip.outputs[0], uv0_ng.inputs['Y'])
     
-    # Sample depth slice 1
-    uv1 = builder.combine_xyz(base_x + 3300, base_y - 150, f'UV1{suffix}')
-    builder.link(final_x1.outputs[0], uv1.inputs['X'])
-    builder.link(u_mu_flip.outputs[0], uv1.inputs['Y'])
+    tex0_ng = builder.image_texture(base_x + 3450, base_y + 100, f'Scat0_ng{suffix}', scattering_path)
+    builder.link(uv0_ng.outputs[0], tex0_ng.inputs['Vector'])
     
-    tex1 = builder.image_texture(base_x + 3450, base_y - 150, f'Scat1{suffix}', scattering_path)
-    builder.link(uv1.outputs[0], tex1.inputs['Vector'])
+    uv1_ng = builder.combine_xyz(base_x + 3300, base_y + 50, f'UV1_ng{suffix}')
+    builder.link(final_x1.outputs[0], uv1_ng.inputs['X'])
+    builder.link(u_mu_ng_flip.outputs[0], uv1_ng.inputs['Y'])
     
-    # Interpolate between depth slices
-    mix = builder.mix('RGBA', 'MIX', base_x + 3650, base_y - 75, f'DepthMix{suffix}')
-    builder.link(depth_frac.outputs[0], mix.inputs['Factor'])
-    builder.link(tex0.outputs['Color'], mix.inputs[6])  # A
-    builder.link(tex1.outputs['Color'], mix.inputs[7])  # B
+    tex1_ng = builder.image_texture(base_x + 3450, base_y + 50, f'Scat1_ng{suffix}', scattering_path)
+    builder.link(uv1_ng.outputs[0], tex1_ng.inputs['Vector'])
+    
+    mix_ng = builder.mix('RGBA', 'MIX', base_x + 3650, base_y + 75, f'DepthMix_ng{suffix}')
+    builder.link(depth_frac.outputs[0], mix_ng.inputs['Factor'])
+    builder.link(tex0_ng.outputs['Color'], mix_ng.inputs[6])
+    builder.link(tex1_ng.outputs['Color'], mix_ng.inputs[7])
+    
+    # --- GROUND samples (u_mu_g) ---
+    u_mu_g_flip = builder.math('SUBTRACT', base_x + 3150, base_y - 200, f'u_mu_g_flip{suffix}', v0=1.0)
+    builder.link(u_mu_g.outputs[0], u_mu_g_flip.inputs[1])
+    
+    uv0_g = builder.combine_xyz(base_x + 3300, base_y - 200, f'UV0_g{suffix}')
+    builder.link(final_x0.outputs[0], uv0_g.inputs['X'])
+    builder.link(u_mu_g_flip.outputs[0], uv0_g.inputs['Y'])
+    
+    tex0_g = builder.image_texture(base_x + 3450, base_y - 200, f'Scat0_g{suffix}', scattering_path)
+    builder.link(uv0_g.outputs[0], tex0_g.inputs['Vector'])
+    
+    uv1_g = builder.combine_xyz(base_x + 3300, base_y - 250, f'UV1_g{suffix}')
+    builder.link(final_x1.outputs[0], uv1_g.inputs['X'])
+    builder.link(u_mu_g_flip.outputs[0], uv1_g.inputs['Y'])
+    
+    tex1_g = builder.image_texture(base_x + 3450, base_y - 250, f'Scat1_g{suffix}', scattering_path)
+    builder.link(uv1_g.outputs[0], tex1_g.inputs['Vector'])
+    
+    mix_g = builder.mix('RGBA', 'MIX', base_x + 3650, base_y - 225, f'DepthMix_g{suffix}')
+    builder.link(depth_frac.outputs[0], mix_g.inputs['Factor'])
+    builder.link(tex0_g.outputs['Color'], mix_g.inputs[6])
+    builder.link(tex1_g.outputs['Color'], mix_g.inputs[7])
+    
+    # --- Blend based on ray_intersects_ground ---
+    # If ray_intersects_ground_socket provided, use it; otherwise use non-ground only
+    if ray_intersects_ground_socket is not None:
+        final_mix = builder.mix('RGBA', 'MIX', base_x + 3850, base_y - 75, f'ScatBlend{suffix}')
+        builder.link(ray_intersects_ground_socket, final_mix.inputs['Factor'])
+        builder.link(mix_ng.outputs[2], final_mix.inputs[6])  # Non-ground (factor=0)
+        builder.link(mix_g.outputs[2], final_mix.inputs[7])   # Ground (factor=1)
+        result = final_mix.outputs[2]
+    else:
+        result = mix_ng.outputs[2]
     
     if return_u_mu:
-        return mix.outputs[2], u_mu_for_debug.outputs[0], u_mu_ground_for_debug  # Result + u_mu + u_mu_ground
-    return mix.outputs[2]  # Result
+        return result, u_mu_ng.outputs[0], u_mu_g.outputs[0]
+    return result
 
 
 def _compute_scattering_uvwz(builder, r_socket, mu_socket, mu_s_socket, nu_socket,
@@ -1105,22 +1131,22 @@ def create_aerial_perspective_node_group(lut_dir=None):
     # =========================================================================
     # SCATTERING LOOKUPS - Camera and Point (with depth interpolation)
     # 
-    # FIX V36: Always use NON-GROUND scattering formula.
-    # The ground formula is for rays that penetrate the planet sphere, which
-    # never happens with actual scene geometry. Using non-ground consistently
-    # avoids the u_mu discontinuity (0.99 jump) at the horizon boundary.
+    # V37: Sample BOTH texture halves (non-ground and ground) and blend based on
+    # ray_intersects_ground. This gives correct results for both above-horizon
+    # (non-ground) and below-horizon (ground) viewing angles.
     # =========================================================================
     
-    # Sample scattering at camera position - NO ray_intersects_ground (defaults to non-ground)
+    # Sample scattering at camera position with blending
     scat_cam_color = sample_scattering_texture(
         builder, r.outputs[0], mu_final.outputs[0], mu_s_final.outputs[0], nu.outputs['Value'],
-        scattering_path, 1800, 200, "_cam", None  # None = always use non-ground
+        scattering_path, 1800, 200, "_cam", ray_intersects_ground.outputs[0]
     )
     
-    # Sample scattering at point position - NO ray_intersects_ground (defaults to non-ground)
+    # Sample scattering at point position with blending
+    # Use SAME ray_intersects_ground from camera (per reference implementation)
     scat_pt_color = sample_scattering_texture(
         builder, r_p.outputs[0], mu_p_final.outputs[0], mu_s_p_final.outputs[0], nu.outputs['Value'],
-        scattering_path, 1800, -400, "_pt", None  # None = always use non-ground
+        scattering_path, 1800, -400, "_pt", ray_intersects_ground.outputs[0]
     )
     
     # =========================================================================
