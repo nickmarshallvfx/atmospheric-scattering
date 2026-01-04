@@ -365,8 +365,9 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
     builder.link(tex1_ng.outputs['Color'], mix_ng.inputs[7])
     
     # --- GROUND samples (u_mu_g) ---
+    # Note: u_mu_g is already a socket (returned from _compute_scattering_uvwz)
     u_mu_g_flip = builder.math('SUBTRACT', base_x + 3150, base_y - 200, f'u_mu_g_flip{suffix}', v0=1.0)
-    builder.link(u_mu_g.outputs[0], u_mu_g_flip.inputs[1])
+    builder.link(u_mu_g, u_mu_g_flip.inputs[1])
     
     uv0_g = builder.combine_xyz(base_x + 3300, base_y - 200, f'UV0_g{suffix}')
     builder.link(final_x0.outputs[0], uv0_g.inputs['X'])
@@ -399,7 +400,7 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
         result = mix_ng.outputs[2]
     
     if return_u_mu:
-        return result, u_mu_ng.outputs[0], u_mu_g.outputs[0]
+        return result, u_mu_ng.outputs[0], u_mu_g  # u_mu_g is already a socket
     return result
 
 
