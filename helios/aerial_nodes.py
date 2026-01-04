@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 32  # FIX: Switch transmittance formula based on r_p vs r (point vs camera altitude)
+AERIAL_NODE_VERSION = 33  # FIX: Smooth blend transmittance VALUES near horizon (not hard switch)
 
 # Minimum virtual camera altitude for atmospheric calculations (km)
 # This prevents degenerate cases when camera is at planet surface
@@ -1070,25 +1070,71 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(sep_pt_g.outputs['Blue'], T_g_b.inputs[0])
     builder.link(cam_g_safe_b.outputs[0], T_g_b.inputs[1])
     
-    # --- SELECT based on r_p >= r (point altitude vs camera altitude) ---
-    # If r_p >= r: use non-ground (factor = 0)
-    # If r_p < r: use ground (factor = 1)
-    point_below_cam = builder.math('LESS_THAN', 1400, 550, 'r_p<r')
-    builder.link(r_p.outputs[0], point_below_cam.inputs[0])
-    builder.link(r.outputs[0], point_below_cam.inputs[1])
+    # --- SMOOTH BLEND between formulas based on mu relative to mu_horizon ---
+    # mu_horizon = -rho/r where rho = sqrt(r² - bottom²)
+    # Blend smoothly over a range to avoid hard discontinuity
     
-    T_sel_r = builder.mix('FLOAT', 'MIX', 1550, 550, 'T_sel_r')
-    builder.link(point_below_cam.outputs[0], T_sel_r.inputs['Factor'])
-    builder.link(T_ng_r.outputs[0], T_sel_r.inputs[2])  # A = non-ground (r_p >= r)
-    builder.link(T_g_r.outputs[0], T_sel_r.inputs[3])   # B = ground (r_p < r)
+    # Compute rho = sqrt(r² - bottom²)
+    r_sq_trans = builder.math('MULTIPLY', 1400, 700, 'r²_trans')
+    builder.link(r.outputs[0], r_sq_trans.inputs[0])
+    builder.link(r.outputs[0], r_sq_trans.inputs[1])
     
-    T_sel_g = builder.mix('FLOAT', 'MIX', 1550, 500, 'T_sel_g')
-    builder.link(point_below_cam.outputs[0], T_sel_g.inputs['Factor'])
+    rho_sq_trans = builder.math('SUBTRACT', 1400, 650, 'rho²_trans', v1=BOTTOM_RADIUS * BOTTOM_RADIUS)
+    builder.link(r_sq_trans.outputs[0], rho_sq_trans.inputs[0])
+    
+    rho_sq_safe_trans = builder.math('MAXIMUM', 1400, 600, 'rho²_safe_t', v1=0.0)
+    builder.link(rho_sq_trans.outputs[0], rho_sq_safe_trans.inputs[0])
+    
+    rho_trans = builder.math('SQRT', 1400, 550, 'rho_trans')
+    builder.link(rho_sq_safe_trans.outputs[0], rho_trans.inputs[0])
+    
+    # mu_horizon = -rho/r (negative because looking down at horizon)
+    mu_horizon_trans = builder.math('DIVIDE', 1550, 600, 'mu_h_trans')
+    builder.link(rho_trans.outputs[0], mu_horizon_trans.inputs[0])
+    builder.link(r.outputs[0], mu_horizon_trans.inputs[1])
+    
+    neg_mu_horizon = builder.math('MULTIPLY', 1550, 550, '-mu_h', v1=-1.0)
+    builder.link(mu_horizon_trans.outputs[0], neg_mu_horizon.inputs[0])
+    
+    # Compute blend factor: how far is mu from mu_horizon?
+    # Blend width of 0.05 in mu space (~3 degrees)
+    TRANS_BLEND_WIDTH = 0.05
+    
+    mu_minus_muh = builder.math('SUBTRACT', 1700, 600, 'mu-mu_h')
+    builder.link(mu_final.outputs[0], mu_minus_muh.inputs[0])
+    builder.link(neg_mu_horizon.outputs[0], mu_minus_muh.inputs[1])
+    
+    # Normalize: t = (mu - mu_horizon) / blend_width
+    blend_t = builder.math('DIVIDE', 1700, 550, 'blend_t', v1=TRANS_BLEND_WIDTH)
+    builder.link(mu_minus_muh.outputs[0], blend_t.inputs[0])
+    
+    # Clamp to [-1, 1] then map to [0, 1]: factor = 0.5 - 0.5 * clamp(t)
+    blend_clamp_min = builder.math('MAXIMUM', 1850, 550, 'blend_clamp_min', v1=-1.0)
+    builder.link(blend_t.outputs[0], blend_clamp_min.inputs[0])
+    
+    blend_clamp = builder.math('MINIMUM', 2000, 550, 'blend_clamp', v1=1.0)
+    builder.link(blend_clamp_min.outputs[0], blend_clamp.inputs[0])
+    
+    # factor = 0.5 - 0.5 * t (so t=1 -> 0 non-ground, t=-1 -> 1 ground)
+    blend_scaled = builder.math('MULTIPLY', 2150, 550, 'blend_scaled', v1=-0.5)
+    builder.link(blend_clamp.outputs[0], blend_scaled.inputs[0])
+    
+    trans_blend_factor = builder.math('ADD', 2300, 550, 'trans_blend_fac', v0=0.5)
+    builder.link(blend_scaled.outputs[0], trans_blend_factor.inputs[1])
+    
+    # Mix transmittance values (not UV coords - the actual T values)
+    T_sel_r = builder.mix('FLOAT', 'MIX', 2450, 550, 'T_sel_r')
+    builder.link(trans_blend_factor.outputs[0], T_sel_r.inputs['Factor'])
+    builder.link(T_ng_r.outputs[0], T_sel_r.inputs[2])  # A = non-ground
+    builder.link(T_g_r.outputs[0], T_sel_r.inputs[3])   # B = ground
+    
+    T_sel_g = builder.mix('FLOAT', 'MIX', 2450, 500, 'T_sel_g')
+    builder.link(trans_blend_factor.outputs[0], T_sel_g.inputs['Factor'])
     builder.link(T_ng_g.outputs[0], T_sel_g.inputs[2])
     builder.link(T_g_g.outputs[0], T_sel_g.inputs[3])
     
-    T_sel_b = builder.mix('FLOAT', 'MIX', 1550, 450, 'T_sel_b')
-    builder.link(point_below_cam.outputs[0], T_sel_b.inputs['Factor'])
+    T_sel_b = builder.mix('FLOAT', 'MIX', 2450, 450, 'T_sel_b')
+    builder.link(trans_blend_factor.outputs[0], T_sel_b.inputs['Factor'])
     builder.link(T_ng_b.outputs[0], T_sel_b.inputs[2])
     builder.link(T_g_b.outputs[0], T_sel_b.inputs[3])
     
