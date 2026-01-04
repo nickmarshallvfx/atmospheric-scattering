@@ -15,14 +15,14 @@ define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
                     <page id="Viewer.1"/>
                 </dock>
                 <split size="449"/>
-                <dock id="" activePageId="DAG.1">
+                <dock id="" activePageId="DAG.1" focus="true">
                     <page id="DAG.1"/>
                     <page id="Curve Editor.1"/>
                     <page id="DopeSheet.1"/>
                 </dock>
             </splitter>
             <split size="615"/>
-            <dock id="" activePageId="Properties.1" focus="true">
+            <dock id="" activePageId="Properties.1">
                 <page id="Properties.1"/>
                 <page id="uk.co.thefoundry.backgroundrenderview.1"/>
             </dock>
@@ -59,15 +59,35 @@ Read {
 Read {
  inputs 0
  file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/single_mie_scattering.exr
+ format "8192 128 0 0 8192 128 1 "
+ origset true
+ version 10
+ name Read7
+ xpos 400
+ ypos 57
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/helios_cache/luts_backup_working/transmittance.exr
+ format "256 64 0 0 256 64 1 "
+ origset true
+ name Read2
+ xpos 290
+ ypos -135
+}
+Read {
+ inputs 0
+ file_type exr
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/irradiance.exr
  format "64 16 0 0 64 16 1 "
  origset true
- version 52
+ version 74
  name Read5
  xpos 918
  ypos 81
 }
-set N655b3000 [stack 0]
 Shuffle2 {
  fromInput1 {{0} B}
  fromInput2 {{0} B}
@@ -130,35 +150,13 @@ Merge2 {
 Read {
  inputs 0
  file_type exr
- file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/transmittance.exr
- format "256 64 0 0 256 64 1 "
- origset true
- version 21
- name Read8
- xpos 290
- ypos 45
-}
-Read {
- inputs 0
- file_type exr
- file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-4/helios_cache/luts_backup_working/transmittance.exr
- format "256 64 0 0 256 64 1 "
- origset true
- name Read2
- xpos 282
- ypos -134
-}
-push $N655b3000
-Read {
- inputs 0
- file_type exr
  file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/scattering.exr
  format "8192 128 0 0 8192 128 1 "
  origset true
- version 23
+ version 49
  name Read6
  xpos 510
- ypos 45
+ ypos 51
 }
 Shuffle2 {
  fromInput1 {{0} B}
@@ -198,7 +196,7 @@ Read {
  origset true
  version 1
  name Read3
- xpos 432
+ xpos 435
  ypos -183
 }
 Shuffle2 {
@@ -236,10 +234,271 @@ Merge2 {
  xpos 400
  ypos 303
 }
+Read {
+ inputs 0
+ file_type exr
+ file C:/Users/space/OneDrive/Desktop/OSLDefaults.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ name Read10
+ xpos 1721
+ ypos 47
+}
+set N3a459800 [stack 0]
+add_layer {ViewLayer_Environment ViewLayer_Environment.red ViewLayer_Environment.green ViewLayer_Environment.blue}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Environment
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Environment.red 0 0 rgba.red 0 0 ViewLayer_Environment.green 0 1 rgba.green 0 1 ViewLayer_Environment.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle6
+ xpos 1721
+ ypos 166
+}
+push $N3a459800
+add_layer {ViewLayer_Combined ViewLayer_Combined.red ViewLayer_Combined.green ViewLayer_Combined.blue ViewLayer_Combined.alpha}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Combined
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle9
+ xpos 1831
+ ypos 166
+}
+Read {
+ inputs 0
+ file_type exr
+ file C:/Users/space/OneDrive/Desktop/nodeBasedDefaults.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ version 6
+ name Read9
+ xpos 1501
+ ypos 46
+}
+set N3a459000 [stack 0]
+add_layer {ViewLayer_Helios_Sky ViewLayer_Helios_Sky.red ViewLayer_Helios_Sky.green ViewLayer_Helios_Sky.blue ViewLayer_Helios_Sky.alpha}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Helios_Sky
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle5
+ xpos 1501
+ ypos 166
+}
+push $N3a459000
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Combined
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle8
+ xpos 1366
+ ypos 196
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/OneDrive/Desktop/nodeBased_8degElev.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ version 9
+ raw true
+ name Read12
+ xpos 1501
+ ypos -152
+}
+set N3a458400 [stack 0]
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Combined
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle12
+ xpos 1450
+ ypos -2
+}
+push $N3a458400
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Helios_Sky
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Helios_Sky.red 0 0 rgba.red 0 0 ViewLayer_Helios_Sky.green 0 1 rgba.green 0 1 ViewLayer_Helios_Sky.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle11
+ xpos 1558
+ ypos -2
+}
+Merge2 {
+ inputs 2
+ name Merge3
+ xpos 1593
+ ypos 45
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/OneDrive/Desktop/OSL_8degElev.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ raw true
+ name Read13
+ xpos 1721
+ ypos -151
+}
+set N3a458c00 [stack 0]
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Combined
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle10
+ xpos 1791
+ ypos -2
+}
+push $N3a458c00
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Environment
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Environment.red 0 0 rgba.red 0 0 ViewLayer_Environment.green 0 1 rgba.green 0 1 ViewLayer_Environment.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle7
+ xpos 1682
+ ypos 3
+}
+Merge2 {
+ inputs 2
+ name Merge4
+ xpos 1830
+ ypos 50
+}
+Read {
+ inputs 0
+ file_type exr
+ file c:/Users/space/OneDrive/Desktop/atmosphere_test_v001.exr
+ format "960 540 0 0 960 540 1 "
+ origset true
+ version 1
+ raw true
+ name Read11
+ xpos 2161
+ ypos -189
+}
+set N39360c00 [stack 0]
+Unpremult {
+ channels all
+ alpha ViewLayer_Combined.alpha
+ name Unpremult1
+ xpos 2161
+ ypos -63
+}
+set N39a89000 [stack 0]
+add_layer {ViewLayer_Helios_Inscatter ViewLayer_Helios_Inscatter.red ViewLayer_Helios_Inscatter.green ViewLayer_Helios_Inscatter.blue ViewLayer_Helios_Inscatter.alpha}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Helios_Inscatter
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Helios_Inscatter.red 0 0 rgba.red 0 0 ViewLayer_Helios_Inscatter.green 0 1 rgba.green 0 1 ViewLayer_Helios_Inscatter.blue 0 2 rgba.blue 0 2 ViewLayer_Helios_Inscatter.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle16
+ xpos 2381
+ ypos 15
+}
+EXPTool {
+ red 1
+ green 1
+ blue 1
+ name Exposure1
+ xpos 2381
+ ypos 39
+}
+push $N39a89000
+add_layer {ViewLayer_Helios_Transmittance ViewLayer_Helios_Transmittance.red ViewLayer_Helios_Transmittance.green ViewLayer_Helios_Transmittance.blue ViewLayer_Helios_Transmittance.alpha}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Helios_Transmittance
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Helios_Transmittance.red 0 0 rgba.red 0 0 ViewLayer_Helios_Transmittance.green 0 1 rgba.green 0 1 ViewLayer_Helios_Transmittance.blue 0 2 rgba.blue 0 2 ViewLayer_Helios_Transmittance.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle15
+ xpos 2271
+ ypos 15
+}
+push $N39a89000
+add_layer {ViewLayer_Noisy_Image ViewLayer_Noisy_Image.red ViewLayer_Noisy_Image.green ViewLayer_Noisy_Image.blue ViewLayer_Noisy_Image.alpha}
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Noisy_Image
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Noisy_Image.red 0 0 rgba.red 0 0 ViewLayer_Noisy_Image.green 0 1 rgba.green 0 1 ViewLayer_Noisy_Image.blue 0 2 rgba.blue 0 2 ViewLayer_Noisy_Image.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle13
+ xpos 2161
+ ypos -9
+}
+Merge2 {
+ inputs 2
+ operation multiply
+ name Merge6
+ xpos 2161
+ ypos 63
+}
+Merge2 {
+ inputs 2
+ operation plus
+ name Merge7
+ xpos 2161
+ ypos 111
+}
+set N32f9bc00 [stack 0]
+push $N39360c00
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Environment
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Environment.red 0 0 rgba.red 0 0 ViewLayer_Environment.green 0 1 rgba.green 0 1 ViewLayer_Environment.blue 0 2 rgba.blue 0 2 black -1 -1 rgba.alpha 0 3"
+ name Shuffle14
+ xpos 2051
+ ypos 279
+}
+push $N39360c00
+Shuffle2 {
+ fromInput1 {{0} B}
+ in1 ViewLayer_Combined
+ fromInput2 {{0} B}
+ mappings "4 ViewLayer_Combined.red 0 0 rgba.red 0 0 ViewLayer_Combined.green 0 1 rgba.green 0 1 ViewLayer_Combined.blue 0 2 rgba.blue 0 2 ViewLayer_Combined.alpha 0 3 rgba.alpha 0 3"
+ name Shuffle17
+ xpos 2068
+ ypos -105
+}
+Dot {
+ name Dot1
+ xpos 2102
+ ypos 209
+}
+push $N32f9bc00
+Copy {
+ inputs 2
+ from0 rgba.alpha
+ to0 rgba.alpha
+ name Copy1
+ xpos 2161
+ ypos 201
+}
+Premult {
+ name Premult1
+ xpos 2161
+ ypos 237
+}
+Merge2 {
+ inputs 2
+ name Merge5
+ xpos 2161
+ ypos 279
+}
 Viewer {
  inputs 2
  frame 10
  frame_range 1-100
+ gain 0.35
  colour_sample_bbox {1.125 0.125 1.15625 0.15625}
  samplepoints {{1.125 0.125}
    }
@@ -251,12 +510,11 @@ Viewer {
 Read {
  inputs 0
  file_type exr
- file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/single_mie_scattering.exr
- format "8192 128 0 0 8192 128 1 "
+ file c:/Users/space/Documents/mattepaint/dev/atmospheric-scattering-3/helios_cache/luts/transmittance.exr
+ format "256 64 0 0 256 64 1 "
  origset true
- version 8
- name Read7
- selected true
- xpos 400
- ypos 57
+ version 25
+ name Read8
+ xpos 290
+ ypos 45
 }

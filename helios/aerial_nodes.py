@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 35  # BASELINE: Revert to original ray_intersects_ground switch for validation
+AERIAL_NODE_VERSION = 36  # FIX: Use only NON-GROUND scattering (scene never penetrates planet)
 
 # Minimum virtual camera altitude for atmospheric calculations (km)
 # This prevents degenerate cases when camera is at planet surface
@@ -1104,20 +1104,23 @@ def create_aerial_perspective_node_group(lut_dir=None):
     
     # =========================================================================
     # SCATTERING LOOKUPS - Camera and Point (with depth interpolation)
-    # Both use SAME ray_intersects_ground from camera params (per reference)
+    # 
+    # FIX V36: Always use NON-GROUND scattering formula.
+    # The ground formula is for rays that penetrate the planet sphere, which
+    # never happens with actual scene geometry. Using non-ground consistently
+    # avoids the u_mu discontinuity (0.99 jump) at the horizon boundary.
     # =========================================================================
     
-    # Sample scattering at camera position with depth interpolation
+    # Sample scattering at camera position - NO ray_intersects_ground (defaults to non-ground)
     scat_cam_color = sample_scattering_texture(
         builder, r.outputs[0], mu_final.outputs[0], mu_s_final.outputs[0], nu.outputs['Value'],
-        scattering_path, 1800, 200, "_cam", ray_intersects_ground.outputs[0]
+        scattering_path, 1800, 200, "_cam", None  # None = always use non-ground
     )
     
-    # Sample scattering at point position with depth interpolation
-    # CRITICAL: Use SAME ray_intersects_ground from camera, not from point!
+    # Sample scattering at point position - NO ray_intersects_ground (defaults to non-ground)
     scat_pt_color = sample_scattering_texture(
         builder, r_p.outputs[0], mu_p_final.outputs[0], mu_s_p_final.outputs[0], nu.outputs['Value'],
-        scattering_path, 1800, -400, "_pt", ray_intersects_ground.outputs[0]
+        scattering_path, 1800, -400, "_pt", None  # None = always use non-ground
     )
     
     # =========================================================================
