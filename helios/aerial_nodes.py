@@ -49,7 +49,7 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 26  # FIX: Add minimum camera altitude to prevent ground-level formula breakdown
+AERIAL_NODE_VERSION = 28  # DEBUG: Output raw inscatter (before phase) to diagnose saturated blue
 
 # Minimum virtual camera altitude for atmospheric calculations (km)
 # This prevents degenerate cases when camera is at planet surface
@@ -1168,8 +1168,9 @@ def create_aerial_perspective_node_group(lut_dir=None):
     
     builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
     
-    # Output proper inscatter with phase function applied
-    builder.link(inscatter_phased.outputs[0], group_output.inputs['Inscatter'])
+    # DEBUG V28: Output RAW inscatter (before phase function) to see if saturation is from scattering or phase
+    # This helps diagnose whether the saturated blue is in the LUT or the calculation
+    builder.link(inscatter_max.outputs[0], group_output.inputs['Inscatter'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
