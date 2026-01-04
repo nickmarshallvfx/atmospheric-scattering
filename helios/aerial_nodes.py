@@ -49,11 +49,15 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 26  # FIX: Add minimum camera altitude to prevent ground-level formula breakdown
+AERIAL_NODE_VERSION = 27  # FIX: Smooth horizon blending to eliminate ground/building junction discontinuity
 
 # Minimum virtual camera altitude for atmospheric calculations (km)
 # This prevents degenerate cases when camera is at planet surface
 MIN_CAMERA_ALTITUDE = 0.5  # 500 meters minimum
+
+# Horizon blend width: how much to smooth the transition at the horizon
+# Larger values = smoother transition but less accurate
+HORIZON_BLEND_WIDTH = 0.02  # Blend over ±0.02 in mu around the horizon
 
 
 # =============================================================================
@@ -583,12 +587,52 @@ def _compute_scattering_uvwz(builder, r_socket, mu_socket, mu_s_socket, nu_socke
     builder.link(u_mu_g_half.outputs[0], u_mu_ground.inputs[1])
     
     # -------------------------------------------------------------------------
-    # SELECT u_mu based on ray_intersects_ground
+    # SELECT u_mu with SMOOTH BLENDING near horizon
+    # This eliminates the hard discontinuity at the ground/building junction
     # -------------------------------------------------------------------------
     if ray_intersects_ground_socket is not None:
+        # Compute mu_horizon = -rho / r
+        # At horizon, discriminant = 0, and mu = -sqrt(1 - bottom²/r²) = -rho/r
+        mu_horizon = builder.math('DIVIDE', base_x + 2300, base_y - 50, f'mu_h{suffix}')
+        builder.link(rho.outputs[0], mu_horizon.inputs[0])
+        builder.link(r_socket, mu_horizon.inputs[1])
+        
+        neg_mu_horizon = builder.math('MULTIPLY', base_x + 2450, base_y - 50, f'-mu_h{suffix}', v1=-1.0)
+        builder.link(mu_horizon.outputs[0], neg_mu_horizon.inputs[0])
+        
+        # Compute smooth blend factor: smoothstep from non-ground to ground
+        # factor = 0 when mu > mu_horizon + blend_width (non-ground)
+        # factor = 1 when mu < mu_horizon - blend_width (ground)
+        # Smooth transition in between
+        
+        # (mu - mu_horizon) / blend_width -> normalized distance from horizon
+        mu_minus_horizon = builder.math('SUBTRACT', base_x + 2300, base_y - 100, f'mu-mu_h{suffix}')
+        builder.link(mu_socket, mu_minus_horizon.inputs[0])
+        builder.link(neg_mu_horizon.outputs[0], mu_minus_horizon.inputs[1])
+        
+        # Normalize by blend width: t = (mu - mu_horizon) / blend_width
+        # t > 1 -> fully non-ground, t < -1 -> fully ground
+        blend_normalized = builder.math('DIVIDE', base_x + 2450, base_y - 100, f'blend_t{suffix}', 
+                                         v1=HORIZON_BLEND_WIDTH)
+        builder.link(mu_minus_horizon.outputs[0], blend_normalized.inputs[0])
+        
+        # Clamp to [-1, 1] then map to [0, 1]: factor = 0.5 - 0.5 * clamp(t, -1, 1)
+        blend_clamp_min = builder.math('MAXIMUM', base_x + 2600, base_y - 100, f'blend_clamp_min{suffix}', v1=-1.0)
+        builder.link(blend_normalized.outputs[0], blend_clamp_min.inputs[0])
+        
+        blend_clamp = builder.math('MINIMUM', base_x + 2750, base_y - 100, f'blend_clamp{suffix}', v1=1.0)
+        builder.link(blend_clamp_min.outputs[0], blend_clamp.inputs[0])
+        
+        # factor = 0.5 - 0.5 * t  (so t=1 -> factor=0, t=-1 -> factor=1)
+        blend_scaled = builder.math('MULTIPLY', base_x + 2900, base_y - 100, f'blend_sc{suffix}', v1=-0.5)
+        builder.link(blend_clamp.outputs[0], blend_scaled.inputs[0])
+        
+        smooth_factor = builder.math('ADD', base_x + 3050, base_y - 100, f'smooth_fac{suffix}', v0=0.5)
+        builder.link(blend_scaled.outputs[0], smooth_factor.inputs[1])
+        
         # Mix: factor=0 -> non-ground (A), factor=1 -> ground (B)
-        u_mu_mix = builder.mix('FLOAT', 'MIX', base_x + 2400, base_y - 137, f'u_mu_sel{suffix}')
-        builder.link(ray_intersects_ground_socket, u_mu_mix.inputs['Factor'])
+        u_mu_mix = builder.mix('FLOAT', 'MIX', base_x + 3200, base_y - 137, f'u_mu_sel{suffix}')
+        builder.link(smooth_factor.outputs[0], u_mu_mix.inputs['Factor'])
         builder.link(u_mu_nonground.outputs[0], u_mu_mix.inputs[2])  # A (non-ground)
         builder.link(u_mu_ground.outputs[0], u_mu_mix.inputs[3])  # B (ground)
         u_mu_selected = u_mu_mix.outputs[0]
@@ -960,6 +1004,55 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(disc_ge_zero.outputs[0], ray_intersects_ground.inputs[1])
     
     # =========================================================================
+    # SMOOTH HORIZON BLEND FACTOR
+    # Instead of hard switching at the horizon, smoothly blend between formulas
+    # This eliminates the bright line artifact at the ground/building junction
+    # =========================================================================
+    
+    # rho = sqrt(r² - bottom²) for horizon calculation
+    r_sq_for_rho = builder.math('MULTIPLY', 2850, 650, 'r²_rho')
+    builder.link(r.outputs[0], r_sq_for_rho.inputs[0])
+    builder.link(r.outputs[0], r_sq_for_rho.inputs[1])
+    
+    rho_sq_main = builder.math('SUBTRACT', 3000, 650, 'rho²_main', v1=BOTTOM_RADIUS * BOTTOM_RADIUS)
+    builder.link(r_sq_for_rho.outputs[0], rho_sq_main.inputs[0])
+    
+    rho_sq_safe_main = builder.math('MAXIMUM', 3150, 650, 'rho²_safe_m', v1=0.0)
+    builder.link(rho_sq_main.outputs[0], rho_sq_safe_main.inputs[0])
+    
+    rho_main = builder.math('SQRT', 3300, 650, 'rho_main')
+    builder.link(rho_sq_safe_main.outputs[0], rho_main.inputs[0])
+    
+    # mu_horizon = -rho / r
+    mu_horizon_main = builder.math('DIVIDE', 3450, 650, 'mu_h_main')
+    builder.link(rho_main.outputs[0], mu_horizon_main.inputs[0])
+    builder.link(r.outputs[0], mu_horizon_main.inputs[1])
+    
+    neg_mu_horizon_main = builder.math('MULTIPLY', 3600, 650, '-mu_h_main', v1=-1.0)
+    builder.link(mu_horizon_main.outputs[0], neg_mu_horizon_main.inputs[0])
+    
+    # (mu - mu_horizon) / blend_width
+    mu_minus_horizon_main = builder.math('SUBTRACT', 3450, 600, 'mu-mu_h_main')
+    builder.link(mu_final.outputs[0], mu_minus_horizon_main.inputs[0])
+    builder.link(neg_mu_horizon_main.outputs[0], mu_minus_horizon_main.inputs[1])
+    
+    blend_t_main = builder.math('DIVIDE', 3600, 600, 'blend_t_main', v1=HORIZON_BLEND_WIDTH)
+    builder.link(mu_minus_horizon_main.outputs[0], blend_t_main.inputs[0])
+    
+    # Clamp to [-1, 1], map to [0, 1]: factor = 0.5 - 0.5 * clamp(t, -1, 1)
+    blend_clamp_min_main = builder.math('MAXIMUM', 3750, 600, 'blend_clamp_min_m', v1=-1.0)
+    builder.link(blend_t_main.outputs[0], blend_clamp_min_main.inputs[0])
+    
+    blend_clamp_main = builder.math('MINIMUM', 3900, 600, 'blend_clamp_main', v1=1.0)
+    builder.link(blend_clamp_min_main.outputs[0], blend_clamp_main.inputs[0])
+    
+    blend_scaled_main = builder.math('MULTIPLY', 4050, 600, 'blend_sc_main', v1=-0.5)
+    builder.link(blend_clamp_main.outputs[0], blend_scaled_main.inputs[0])
+    
+    smooth_ground_factor = builder.math('ADD', 4200, 600, 'smooth_ground_fac', v0=0.5)
+    builder.link(blend_scaled_main.outputs[0], smooth_ground_factor.inputs[1])
+    
+    # =========================================================================
     # TRANSMITTANCE - Reference: GetTransmittance (functions.glsl lines 493-518)
     # 
     # CRITICAL: For ground-intersecting rays, uses NEGATED mu values and swaps order:
@@ -1064,19 +1157,19 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(sep_pt_g.outputs['Blue'], T_g_b.inputs[0])
     builder.link(cam_g_safe_b.outputs[0], T_g_b.inputs[1])
     
-    # --- SELECT based on ray_intersects_ground ---
+    # --- SELECT with SMOOTH BLEND (not hard switch) ---
     T_sel_r = builder.mix('FLOAT', 'MIX', 1400, 500, 'T_sel_r')
-    builder.link(ray_intersects_ground.outputs[0], T_sel_r.inputs['Factor'])
+    builder.link(smooth_ground_factor.outputs[0], T_sel_r.inputs['Factor'])
     builder.link(T_ng_r.outputs[0], T_sel_r.inputs[2])  # A = non-ground
     builder.link(T_g_r.outputs[0], T_sel_r.inputs[3])   # B = ground
     
     T_sel_g = builder.mix('FLOAT', 'MIX', 1400, 450, 'T_sel_g')
-    builder.link(ray_intersects_ground.outputs[0], T_sel_g.inputs['Factor'])
+    builder.link(smooth_ground_factor.outputs[0], T_sel_g.inputs['Factor'])
     builder.link(T_ng_g.outputs[0], T_sel_g.inputs[2])
     builder.link(T_g_g.outputs[0], T_sel_g.inputs[3])
     
     T_sel_b = builder.mix('FLOAT', 'MIX', 1400, 400, 'T_sel_b')
-    builder.link(ray_intersects_ground.outputs[0], T_sel_b.inputs['Factor'])
+    builder.link(smooth_ground_factor.outputs[0], T_sel_b.inputs['Factor'])
     builder.link(T_ng_b.outputs[0], T_sel_b.inputs[2])
     builder.link(T_g_b.outputs[0], T_sel_b.inputs[3])
     
