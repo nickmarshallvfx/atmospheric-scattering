@@ -117,32 +117,55 @@ atmospheric-scattering-4/
 
 ## Implementation Phases
 
-### Phase 1: Core Model Port (Python)
+### Phase 1: Core Model Port (Python) ✅ COMPLETE
 1. Port `constants.h` → `core/constants.py`
 2. Port `DensityProfileLayer` and parameter structures
 3. Port LUT precomputation from `model.cc`
 4. Validate LUT output matches reference
 
-### Phase 2: Shader Port
+### Phase 2: Shader Port ✅ COMPLETE
 1. Port `definitions.glsl` → `shaders/definitions.glsl`
 2. Port `functions.glsl` → `shaders/functions.glsl`
 3. Create OSL version for Cycles compatibility
 4. Test shader functions against reference
 
-### Phase 3: Blender Integration
-1. Create addon structure with proper registration
-2. Implement UI panels matching GUI prototype
-3. Create custom nodes for compositor workflow
-4. Implement world shader for sky background
+### Phase 3: Aerial Perspective Pipeline ✅ COMPLETE
+1. Transmittance computation (Steps 1.1-1.5)
+2. Inscatter computation (Steps 2.1-2.4)
+3. Phase functions - Rayleigh and Mie (Steps 3.1-3.2)
+4. Combined output with phase function modulation
 
-### Phase 4: AOV System
-1. Implement separate render passes:
-   - `Sky`: Background sky radiance
-   - `Transmittance`: Per-pixel atmospheric transmittance
-   - `Inscattering`: Atmospheric inscattering contribution
-2. Multi-layer EXR export with proper channel naming
+### Phase 4: Object Integration 🔴 IN PROGRESS
+1. Apply transmittance to object surface (T × surface_color)
+2. Final aerial perspective formula: `L_final = L_surface × T + inscatter`
+3. Proper LUT-based transmittance (replace simplified exponential)
 
-### Phase 5: Validation & Polish
+### Phase 5: AOV System 🔴 PENDING
+Required AOVs for multi-layer EXR output:
+
+| AOV | Content | Purpose |
+|-----|---------|---------|
+| **Sky** | Sky radiance WITHOUT sun disk | Background atmosphere |
+| **Transmittance** | Per-pixel T(camera→point) | Object color attenuation |
+| **Rayleigh** | Rayleigh scattering component | Blue atmospheric scatter |
+| **Mie** | Mie scattering component | Forward scatter / sun halo |
+| **Sun Disk** | Sun disk only (no sky) | Separate for artistic control |
+
+### Phase 6: Scene Integration 🔴 PENDING
+1. **Sun Light Integration**: Read sun position from scene's Sun light object
+   - Derive sun direction from Sun light's world transform matrix
+   - No separate sun position controls in addon
+2. **Creative Controls Sharing**: Sky and aerial perspective use same parameters
+   - `rayleigh_strength`, `mie_strength`, `mie_phase_g`
+   - `mie_density`, `rayleigh_density`, `exposure`
+   - Same LUT textures for both
+
+### Phase 7: Sky Material Validation 🔴 PENDING (separate branch)
+1. Verify existing sky material (main branch) uses identical math
+2. Ensure consistency between sky and aerial perspective
+3. Merge developments in integration branch
+
+### Phase 8: Validation & Polish
 1. Visual comparison with reference implementation
 2. Performance optimization
 3. User documentation

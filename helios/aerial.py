@@ -24,7 +24,8 @@ AERIAL_OSL_NODE_NAME = "Helios_Aerial_OSL"
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_NodeGroup"
 # AOV names must match exactly what's registered in the view layer
 AERIAL_AOV_TRANSMITTANCE = "Helios_Transmittance"
-AERIAL_AOV_INSCATTER = "Helios_Inscatter"
+AERIAL_AOV_RAYLEIGH = "Helios_Rayleigh"
+AERIAL_AOV_MIE = "Helios_Mie"
 
 
 def get_aerial_shader_path():
@@ -88,7 +89,7 @@ def get_sun_direction(settings) -> Vector:
 def setup_aerial_aovs(context):
     """
     Set up AOV outputs for aerial perspective.
-    Creates AOVs for transmittance and inscatter.
+    Creates AOVs for transmittance, Rayleigh, and Mie scattering.
     """
     scene = context.scene
     view_layer = context.view_layer
@@ -96,7 +97,7 @@ def setup_aerial_aovs(context):
     # Force recreate AOVs to ensure correct setup (matches test script)
     aovs = view_layer.aovs
     
-    for aov_name in [AERIAL_AOV_TRANSMITTANCE, AERIAL_AOV_INSCATTER]:
+    for aov_name in [AERIAL_AOV_TRANSMITTANCE, AERIAL_AOV_RAYLEIGH, AERIAL_AOV_MIE]:
         # Remove existing AOV if present (force clean slate)
         for existing_aov in list(aovs):
             if existing_aov.name == aov_name:
@@ -119,7 +120,7 @@ def remove_aerial_aovs(context):
     view_layer = context.view_layer
     aovs = view_layer.aovs
     
-    for aov_name in [AERIAL_AOV_TRANSMITTANCE, AERIAL_AOV_INSCATTER]:
+    for aov_name in [AERIAL_AOV_TRANSMITTANCE, AERIAL_AOV_RAYLEIGH, AERIAL_AOV_MIE]:
         if aov_name in aovs:
             idx = aovs.find(aov_name)
             if idx >= 0:
@@ -135,7 +136,7 @@ def add_aerial_to_material(material, context):
     - NODE: Uses shader node group (supports AOV output)
     - OSL: Uses OSL script (reference, no AOV support in Blender 5.0)
     
-    The AOVs can then be composited: beauty * transmittance + inscatter
+    The AOVs can then be composited: beauty * transmittance + rayleigh + mie
     """
     if material is None:
         return False
@@ -365,16 +366,25 @@ def _create_aov_outputs_node_based(nodes, links, group_node):
     if 'Transmittance' in group_node.outputs:
         links.new(group_node.outputs['Transmittance'], aov_trans.inputs['Color'])
     
-    # Inscatter AOV
-    aov_inscatter = nodes.new('ShaderNodeOutputAOV')
-    aov_inscatter.name = "Helios_AOV_Inscatter"
-    aov_inscatter.location = (group_node.location.x + 200, group_node.location.y - 100)
-    aov_inscatter.aov_name = AERIAL_AOV_INSCATTER
+    # Rayleigh AOV
+    aov_rayleigh = nodes.new('ShaderNodeOutputAOV')
+    aov_rayleigh.name = "Helios_AOV_Rayleigh"
+    aov_rayleigh.location = (group_node.location.x + 200, group_node.location.y - 100)
+    aov_rayleigh.aov_name = AERIAL_AOV_RAYLEIGH
     
-    if 'Inscatter' in group_node.outputs:
-        links.new(group_node.outputs['Inscatter'], aov_inscatter.inputs['Color'])
+    if 'Rayleigh' in group_node.outputs:
+        links.new(group_node.outputs['Rayleigh'], aov_rayleigh.inputs['Color'])
     
-    print(f"Helios: Created AOV outputs for node-based aerial perspective")
+    # Mie AOV
+    aov_mie = nodes.new('ShaderNodeOutputAOV')
+    aov_mie.name = "Helios_AOV_Mie"
+    aov_mie.location = (group_node.location.x + 200, group_node.location.y - 250)
+    aov_mie.aov_name = AERIAL_AOV_MIE
+    
+    if 'Mie' in group_node.outputs:
+        links.new(group_node.outputs['Mie'], aov_mie.inputs['Color'])
+    
+    print(f"Helios: Created AOV outputs for node-based aerial perspective (Transmittance, Rayleigh, Mie)")
 
 
 def _connect_to_material_output(nodes, links, osl_node):
@@ -441,51 +451,12 @@ def _connect_to_material_output(nodes, links, osl_node):
 
 
 def _create_aov_outputs(nodes, links, osl_node):
-    """Create AOV output nodes for transmittance and inscatter.
+    """Create AOV output nodes for OSL-based aerial perspective.
     
-    Matches the pattern from test_aov_blender5.py which works.
+    NOTE: OSL does not support AOV output in Blender 5.0. This is kept for
+    compatibility but the node-based implementation should be used instead.
     """
-    print(f"Helios: Creating AOV outputs...")
-    
-    # Create Geometry node for test (matches working test script)
-    geom_node = nodes.new('ShaderNodeNewGeometry')
-    geom_node.name = "Helios_Geom"
-    geom_node.location = (700, 0)  # Position far right to avoid overlap
-    
-    print(f"Helios: Geometry outputs: {[o.name for o in geom_node.outputs]}")
-    
-    # Transmittance AOV
-    aov_trans = nodes.new('ShaderNodeOutputAOV')
-    aov_trans.name = "Helios_AOV_Transmittance"
-    aov_trans.location = (900, 50)
-    aov_trans.aov_name = AERIAL_AOV_TRANSMITTANCE
-    
-    print(f"Helios: AOV Trans inputs: {[(i.name, i.type) for i in aov_trans.inputs]}")
-    
-    # Connect using index 0 (Color input) explicitly
-    try:
-        link = links.new(geom_node.outputs['Position'], aov_trans.inputs[0])
-        print(f"Helios: Created link: {link}, valid={link.is_valid if link else 'None'}")
-    except Exception as e:
-        print(f"Helios: ERROR creating link: {e}")
-    
-    # Inscatter AOV
-    aov_inscatter = nodes.new('ShaderNodeOutputAOV')
-    aov_inscatter.name = "Helios_AOV_Inscatter"
-    aov_inscatter.location = (900, -100)
-    aov_inscatter.aov_name = AERIAL_AOV_INSCATTER
-    
-    try:
-        link = links.new(geom_node.outputs['Normal'], aov_inscatter.inputs[0])
-        print(f"Helios: Created inscatter link: {link}, valid={link.is_valid if link else 'None'}")
-    except Exception as e:
-        print(f"Helios: ERROR creating inscatter link: {e}")
-    
-    # Verify connections and AOV names
-    print(f"Helios: AOV Trans input links: {[l.from_node.name for l in aov_trans.inputs[0].links]}")
-    print(f"Helios: AOV Inscatter input links: {[l.from_node.name for l in aov_inscatter.inputs[0].links]}")
-    print(f"Helios: AOV Trans node aov_name = '{aov_trans.aov_name}'")
-    print(f"Helios: AOV Inscatter node aov_name = '{aov_inscatter.aov_name}'")
+    print(f"Helios: OSL AOV output not supported in Blender 5.0 - use node-based mode")
 
 
 def remove_aerial_from_material(material):
@@ -525,7 +496,8 @@ def remove_aerial_from_material(material):
         AERIAL_OSL_NODE_NAME,
         AERIAL_NODE_GROUP_NAME,
         "Helios_AOV_Transmittance",
-        "Helios_AOV_Inscatter",
+        "Helios_AOV_Rayleigh",
+        "Helios_AOV_Mie",
         "Helios_Aerial_Emission",
         "Helios_Aerial_Add",
         "Helios_Aerial_Mix",

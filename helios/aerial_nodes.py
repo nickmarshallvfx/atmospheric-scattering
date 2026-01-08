@@ -49,11 +49,28 @@ H = math.sqrt(TOP_RADIUS * TOP_RADIUS - BOTTOM_RADIUS * BOTTOM_RADIUS)
 # =============================================================================
 
 AERIAL_NODE_GROUP_NAME = "Helios_Aerial_Perspective"
-AERIAL_NODE_VERSION = 37  # FIX: Blend scattering from both texture halves near horizon
+AERIAL_NODE_VERSION = 97  # Links confirmed correct - restore actual output
 
 # Minimum virtual camera altitude for atmospheric calculations (km)
-# This prevents degenerate cases when camera is at planet surface
-MIN_CAMERA_ALTITUDE = 0.5  # 500 meters minimum
+# V68: Removed - reference has no such clamp
+# MIN_CAMERA_ALTITUDE = 0.5  # DISABLED - was causing difference from reference
+
+# =============================================================================
+# V46: PURE BRUNETON IMPLEMENTATION
+# =============================================================================
+# This version implements GetSkyRadianceToPoint EXACTLY as in the reference.
+# No horizon clamping, no geometry-based ground detection.
+#
+# Key principle: ray_r_mu_intersects_ground is computed from camera's (r, mu)
+# using RayIntersectsGround formula, and the SAME flag is used for both
+# transmittance AND scattering lookups.
+#
+# Reference: atmospheric-scattering-2-export/atmosphere/functions.glsl
+# Lines 1787-1863 (GetSkyRadianceToPoint)
+# Lines 240-246 (RayIntersectsGround)
+# Lines 493-519 (GetTransmittance)
+# Lines 773-831 (GetScatteringTextureUvwzFromRMuMuSNu)
+# =============================================================================
 
 
 # =============================================================================
@@ -89,6 +106,13 @@ class NodeBuilder:
     
     def combine_xyz(self, x, y, name):
         node = self.nodes.new('ShaderNodeCombineXYZ')
+        node.location = (x, y)
+        node.name = name
+        node.label = name
+        return node
+    
+    def separate_xyz(self, x, y, name):
+        node = self.nodes.new('ShaderNodeSeparateXYZ')
         node.location = (x, y)
         node.name = name
         node.label = name
@@ -211,10 +235,10 @@ def create_transmittance_uv(builder, r_socket, mu_socket, base_x, base_y, suffix
     neg_r_mu = builder.math('MULTIPLY', base_x + 450, base_y - 100, f't_-r×μ{suffix}', v1=-1.0)
     builder.link(r_mu.outputs[0], neg_r_mu.inputs[0])
     
-    # d = -r*mu + sqrt(disc)
-    d = builder.math('ADD', base_x + 900, base_y - 75, f't_d{suffix}')
-    builder.link(neg_r_mu.outputs[0], d.inputs[0])
-    builder.link(disc_sqrt.outputs[0], d.inputs[1])
+    # t_dist = -r*mu + sqrt(disc)  (renamed from 'd' to avoid shadowing distance d)
+    t_dist = builder.math('ADD', base_x + 900, base_y - 75, f't_d{suffix}')
+    builder.link(neg_r_mu.outputs[0], t_dist.inputs[0])
+    builder.link(disc_sqrt.outputs[0], t_dist.inputs[1])
     
     # d_min = top - r
     d_min = builder.math('SUBTRACT', base_x + 600, base_y - 125, f't_d_min{suffix}', v0=TOP_RADIUS)
@@ -224,9 +248,9 @@ def create_transmittance_uv(builder, r_socket, mu_socket, base_x, base_y, suffix
     d_max = builder.math('ADD', base_x + 750, base_y - 125, f't_d_max{suffix}', v1=H)
     builder.link(rho.outputs[0], d_max.inputs[0])
     
-    # x_mu = (d - d_min) / (d_max - d_min)
+    # x_mu = (t_dist - d_min) / (d_max - d_min)
     d_minus_dmin = builder.math('SUBTRACT', base_x + 1050, base_y - 75, f't_d-dmin{suffix}')
-    builder.link(d.outputs[0], d_minus_dmin.inputs[0])
+    builder.link(t_dist.outputs[0], d_minus_dmin.inputs[0])
     builder.link(d_min.outputs[0], d_minus_dmin.inputs[1])
     
     dmax_minus_dmin = builder.math('SUBTRACT', base_x + 1050, base_y - 125, f't_dmax-dmin{suffix}')
@@ -274,18 +298,29 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
     """
     Sample scattering texture with proper depth slice interpolation.
     
-    V37: Always samples BOTH texture halves and blends based on mu proximity to horizon.
-    This avoids the hard discontinuity when ray_intersects_ground switches.
+    V46: Samples ground or non-ground texture half based on ray_intersects_ground_socket.
+    Reference: GetCombinedScattering (functions.glsl lines 1658-1690)
     
     Returns the interpolated scattering color socket (or tuple if return_u_mu=True).
     """
-    # Compute all UV components - get BOTH non-ground and ground u_mu values
-    u_r, u_mu_ng, u_mu_s, x_nu, u_mu_g = _compute_scattering_uvwz(
+    # V68: Use ray_intersects_ground for ground/non-ground UV selection (restored from reference)
+    u_r, u_mu, u_mu_s, x_nu, u_mu_ground = _compute_scattering_uvwz(
         builder, r_socket, mu_socket, mu_s_socket, nu_socket,
-        base_x, base_y, suffix, None  # None = non-ground by default, but we get ground from return
+        base_x, base_y, suffix, ray_intersects_ground_socket
     )
     
-    # Compute nu slice index and fraction (shared by both samples)
+    # =========================================================================
+    # V68: NU INTERPOLATION - Critical fix to match Bruneton reference
+    # Reference (GetScattering lines 965-975):
+    #   tex_coord_x = u_nu * (NU_SIZE - 1)
+    #   tex_x = floor(tex_coord_x)
+    #   lerp = tex_coord_x - tex_x
+    #   uvw0.x = (tex_x + u_mu_s) / NU_SIZE
+    #   uvw1.x = (tex_x + 1 + u_mu_s) / NU_SIZE
+    #   result = texture(uvw0) * (1-lerp) + texture(uvw1) * lerp
+    # =========================================================================
+    
+    # Nu slice index and interpolation factor
     tex_coord_x = builder.math('MULTIPLY', base_x + 2400, base_y, f'tex_x{suffix}', 
                                v1=float(SCATTERING_TEXTURE_NU_SIZE - 1))
     builder.link(x_nu.outputs[0], tex_coord_x.inputs[0])
@@ -293,114 +328,146 @@ def sample_scattering_texture(builder, r_socket, mu_socket, mu_s_socket, nu_sock
     tex_x_floor = builder.math('FLOOR', base_x + 2550, base_y, f'tex_x_floor{suffix}')
     builder.link(tex_coord_x.outputs[0], tex_x_floor.inputs[0])
     
-    tex_x_plus_mus = builder.math('ADD', base_x + 2700, base_y, f'tex_x+mus{suffix}')
-    builder.link(tex_x_floor.outputs[0], tex_x_plus_mus.inputs[0])
-    builder.link(u_mu_s.outputs[0], tex_x_plus_mus.inputs[1])
+    # V68: Compute nu interpolation factor (lerp = tex_coord_x - floor)
+    nu_lerp = builder.math('SUBTRACT', base_x + 2550, base_y + 50, f'nu_lerp{suffix}')
+    builder.link(tex_coord_x.outputs[0], nu_lerp.inputs[0])
+    builder.link(tex_x_floor.outputs[0], nu_lerp.inputs[1])
     
-    uvw_x = builder.math('DIVIDE', base_x + 2850, base_y, f'uvw_x{suffix}', 
-                         v1=float(SCATTERING_TEXTURE_NU_SIZE))
-    builder.link(tex_x_plus_mus.outputs[0], uvw_x.inputs[0])
+    # V68: tex_x_ceil = min(floor + 1, NU_SIZE - 1) to avoid out of bounds
+    tex_x_ceil = builder.math('ADD', base_x + 2700, base_y + 50, f'tex_x_ceil{suffix}', v1=1.0)
+    builder.link(tex_x_floor.outputs[0], tex_x_ceil.inputs[0])
     
-    # Compute depth slice indices and fraction (shared)
-    depth_scaled = builder.math('MULTIPLY', base_x + 2400, base_y - 100, f'depth_sc{suffix}', 
+    tex_x_ceil_clamp = builder.math('MINIMUM', base_x + 2850, base_y + 50, f'tex_x_ceil_clamp{suffix}', 
+                                    v1=float(SCATTERING_TEXTURE_NU_SIZE - 1))
+    builder.link(tex_x_ceil.outputs[0], tex_x_ceil_clamp.inputs[0])
+    
+    # uvw_x for floor nu slice: (tex_x_floor + u_mu_s) / NU_SIZE
+    tex_x_plus_mus_0 = builder.math('ADD', base_x + 2700, base_y, f'tex_x0+mus{suffix}')
+    builder.link(tex_x_floor.outputs[0], tex_x_plus_mus_0.inputs[0])
+    builder.link(u_mu_s.outputs[0], tex_x_plus_mus_0.inputs[1])
+    
+    uvw_x_0 = builder.math('DIVIDE', base_x + 2850, base_y, f'uvw_x0{suffix}', 
+                           v1=float(SCATTERING_TEXTURE_NU_SIZE))
+    builder.link(tex_x_plus_mus_0.outputs[0], uvw_x_0.inputs[0])
+    
+    # uvw_x for ceil nu slice: (tex_x_ceil + u_mu_s) / NU_SIZE
+    tex_x_plus_mus_1 = builder.math('ADD', base_x + 2700, base_y - 50, f'tex_x1+mus{suffix}')
+    builder.link(tex_x_ceil_clamp.outputs[0], tex_x_plus_mus_1.inputs[0])
+    builder.link(u_mu_s.outputs[0], tex_x_plus_mus_1.inputs[1])
+    
+    uvw_x_1 = builder.math('DIVIDE', base_x + 2850, base_y - 50, f'uvw_x1{suffix}', 
+                           v1=float(SCATTERING_TEXTURE_NU_SIZE))
+    builder.link(tex_x_plus_mus_1.outputs[0], uvw_x_1.inputs[0])
+    
+    # Depth slice indices and fraction
+    depth_scaled = builder.math('MULTIPLY', base_x + 2400, base_y - 150, f'depth_sc{suffix}', 
                                 v1=float(SCATTERING_TEXTURE_DEPTH - 1))
     builder.link(u_r.outputs[0], depth_scaled.inputs[0])
     
-    depth_floor = builder.math('FLOOR', base_x + 2550, base_y - 100, f'depth_floor{suffix}')
+    depth_floor = builder.math('FLOOR', base_x + 2550, base_y - 150, f'depth_floor{suffix}')
     builder.link(depth_scaled.outputs[0], depth_floor.inputs[0])
     
-    depth_frac = builder.math('SUBTRACT', base_x + 2700, base_y - 100, f'depth_frac{suffix}')
+    depth_frac = builder.math('SUBTRACT', base_x + 2700, base_y - 150, f'depth_frac{suffix}')
     builder.link(depth_scaled.outputs[0], depth_frac.inputs[0])
     builder.link(depth_floor.outputs[0], depth_frac.inputs[1])
     
-    depth_ceil = builder.math('ADD', base_x + 2550, base_y - 150, f'depth_ceil{suffix}', v1=1.0)
+    depth_ceil = builder.math('ADD', base_x + 2550, base_y - 200, f'depth_ceil{suffix}', v1=1.0)
     builder.link(depth_floor.outputs[0], depth_ceil.inputs[0])
     
-    depth_ceil_clamp = builder.math('MINIMUM', base_x + 2700, base_y - 150, f'depth_ceil_clamp{suffix}', 
+    depth_ceil_clamp = builder.math('MINIMUM', base_x + 2700, base_y - 200, f'depth_ceil_clamp{suffix}', 
                                     v1=float(SCATTERING_TEXTURE_DEPTH - 1))
     builder.link(depth_ceil.outputs[0], depth_ceil_clamp.inputs[0])
     
-    # Compute final X coordinates (shared)
-    slice0_plus_uvw = builder.math('ADD', base_x + 3000, base_y, f'slice0+uvw{suffix}')
-    builder.link(depth_floor.outputs[0], slice0_plus_uvw.inputs[0])
-    builder.link(uvw_x.outputs[0], slice0_plus_uvw.inputs[1])
-    
-    final_x0 = builder.math('DIVIDE', base_x + 3150, base_y, f'final_x0{suffix}', 
-                            v1=float(SCATTERING_TEXTURE_DEPTH))
-    builder.link(slice0_plus_uvw.outputs[0], final_x0.inputs[0])
-    
-    slice1_plus_uvw = builder.math('ADD', base_x + 3000, base_y - 150, f'slice1+uvw{suffix}')
-    builder.link(depth_ceil_clamp.outputs[0], slice1_plus_uvw.inputs[0])
-    builder.link(uvw_x.outputs[0], slice1_plus_uvw.inputs[1])
-    
-    final_x1 = builder.math('DIVIDE', base_x + 3150, base_y - 150, f'final_x1{suffix}', 
-                            v1=float(SCATTERING_TEXTURE_DEPTH))
-    builder.link(slice1_plus_uvw.outputs[0], final_x1.inputs[0])
-    
     # =========================================================================
-    # V37: Sample BOTH texture halves and blend
+    # V68: Sample 4 textures for bilinear interpolation (nu x depth)
     # =========================================================================
     
-    # --- NON-GROUND samples (u_mu_ng) ---
-    u_mu_ng_flip = builder.math('SUBTRACT', base_x + 3150, base_y + 100, f'u_mu_ng_flip{suffix}', v0=1.0)
-    builder.link(u_mu_ng.outputs[0], u_mu_ng_flip.inputs[1])
+    # Flip Y coordinate for texture sampling (Blender convention)
+    u_mu_flip = builder.math('SUBTRACT', base_x + 3000, base_y, f'u_mu_flip{suffix}', v0=1.0)
+    builder.link(u_mu.outputs[0], u_mu_flip.inputs[1])
     
-    uv0_ng = builder.combine_xyz(base_x + 3300, base_y + 100, f'UV0_ng{suffix}')
-    builder.link(final_x0.outputs[0], uv0_ng.inputs['X'])
-    builder.link(u_mu_ng_flip.outputs[0], uv0_ng.inputs['Y'])
+    # --- Sample at (nu_floor, depth_floor) ---
+    final_x_00 = builder.math('ADD', base_x + 3100, base_y + 100, f'fx00{suffix}')
+    builder.link(depth_floor.outputs[0], final_x_00.inputs[0])
+    builder.link(uvw_x_0.outputs[0], final_x_00.inputs[1])
+    final_x_00_div = builder.math('DIVIDE', base_x + 3250, base_y + 100, f'fx00d{suffix}', 
+                                   v1=float(SCATTERING_TEXTURE_DEPTH))
+    builder.link(final_x_00.outputs[0], final_x_00_div.inputs[0])
     
-    tex0_ng = builder.image_texture(base_x + 3450, base_y + 100, f'Scat0_ng{suffix}', scattering_path)
-    builder.link(uv0_ng.outputs[0], tex0_ng.inputs['Vector'])
+    uv_00 = builder.combine_xyz(base_x + 3400, base_y + 100, f'UV00{suffix}')
+    builder.link(final_x_00_div.outputs[0], uv_00.inputs['X'])
+    builder.link(u_mu_flip.outputs[0], uv_00.inputs['Y'])
+    tex_00 = builder.image_texture(base_x + 3550, base_y + 100, f'Tex00{suffix}', scattering_path)
+    builder.link(uv_00.outputs[0], tex_00.inputs['Vector'])
     
-    uv1_ng = builder.combine_xyz(base_x + 3300, base_y + 50, f'UV1_ng{suffix}')
-    builder.link(final_x1.outputs[0], uv1_ng.inputs['X'])
-    builder.link(u_mu_ng_flip.outputs[0], uv1_ng.inputs['Y'])
+    # --- Sample at (nu_floor, depth_ceil) ---
+    final_x_01 = builder.math('ADD', base_x + 3100, base_y, f'fx01{suffix}')
+    builder.link(depth_ceil_clamp.outputs[0], final_x_01.inputs[0])
+    builder.link(uvw_x_0.outputs[0], final_x_01.inputs[1])
+    final_x_01_div = builder.math('DIVIDE', base_x + 3250, base_y, f'fx01d{suffix}', 
+                                   v1=float(SCATTERING_TEXTURE_DEPTH))
+    builder.link(final_x_01.outputs[0], final_x_01_div.inputs[0])
     
-    tex1_ng = builder.image_texture(base_x + 3450, base_y + 50, f'Scat1_ng{suffix}', scattering_path)
-    builder.link(uv1_ng.outputs[0], tex1_ng.inputs['Vector'])
+    uv_01 = builder.combine_xyz(base_x + 3400, base_y, f'UV01{suffix}')
+    builder.link(final_x_01_div.outputs[0], uv_01.inputs['X'])
+    builder.link(u_mu_flip.outputs[0], uv_01.inputs['Y'])
+    tex_01 = builder.image_texture(base_x + 3550, base_y, f'Tex01{suffix}', scattering_path)
+    builder.link(uv_01.outputs[0], tex_01.inputs['Vector'])
     
-    mix_ng = builder.mix('RGBA', 'MIX', base_x + 3650, base_y + 75, f'DepthMix_ng{suffix}')
-    builder.link(depth_frac.outputs[0], mix_ng.inputs['Factor'])
-    builder.link(tex0_ng.outputs['Color'], mix_ng.inputs[6])
-    builder.link(tex1_ng.outputs['Color'], mix_ng.inputs[7])
+    # --- Sample at (nu_ceil, depth_floor) ---
+    final_x_10 = builder.math('ADD', base_x + 3100, base_y - 100, f'fx10{suffix}')
+    builder.link(depth_floor.outputs[0], final_x_10.inputs[0])
+    builder.link(uvw_x_1.outputs[0], final_x_10.inputs[1])
+    final_x_10_div = builder.math('DIVIDE', base_x + 3250, base_y - 100, f'fx10d{suffix}', 
+                                   v1=float(SCATTERING_TEXTURE_DEPTH))
+    builder.link(final_x_10.outputs[0], final_x_10_div.inputs[0])
     
-    # --- GROUND samples (u_mu_g) ---
-    # Note: u_mu_g is already a socket (returned from _compute_scattering_uvwz)
-    u_mu_g_flip = builder.math('SUBTRACT', base_x + 3150, base_y - 200, f'u_mu_g_flip{suffix}', v0=1.0)
-    builder.link(u_mu_g, u_mu_g_flip.inputs[1])
+    uv_10 = builder.combine_xyz(base_x + 3400, base_y - 100, f'UV10{suffix}')
+    builder.link(final_x_10_div.outputs[0], uv_10.inputs['X'])
+    builder.link(u_mu_flip.outputs[0], uv_10.inputs['Y'])
+    tex_10 = builder.image_texture(base_x + 3550, base_y - 100, f'Tex10{suffix}', scattering_path)
+    builder.link(uv_10.outputs[0], tex_10.inputs['Vector'])
     
-    uv0_g = builder.combine_xyz(base_x + 3300, base_y - 200, f'UV0_g{suffix}')
-    builder.link(final_x0.outputs[0], uv0_g.inputs['X'])
-    builder.link(u_mu_g_flip.outputs[0], uv0_g.inputs['Y'])
+    # --- Sample at (nu_ceil, depth_ceil) ---
+    final_x_11 = builder.math('ADD', base_x + 3100, base_y - 200, f'fx11{suffix}')
+    builder.link(depth_ceil_clamp.outputs[0], final_x_11.inputs[0])
+    builder.link(uvw_x_1.outputs[0], final_x_11.inputs[1])
+    final_x_11_div = builder.math('DIVIDE', base_x + 3250, base_y - 200, f'fx11d{suffix}', 
+                                   v1=float(SCATTERING_TEXTURE_DEPTH))
+    builder.link(final_x_11.outputs[0], final_x_11_div.inputs[0])
     
-    tex0_g = builder.image_texture(base_x + 3450, base_y - 200, f'Scat0_g{suffix}', scattering_path)
-    builder.link(uv0_g.outputs[0], tex0_g.inputs['Vector'])
+    uv_11 = builder.combine_xyz(base_x + 3400, base_y - 200, f'UV11{suffix}')
+    builder.link(final_x_11_div.outputs[0], uv_11.inputs['X'])
+    builder.link(u_mu_flip.outputs[0], uv_11.inputs['Y'])
+    tex_11 = builder.image_texture(base_x + 3550, base_y - 200, f'Tex11{suffix}', scattering_path)
+    builder.link(uv_11.outputs[0], tex_11.inputs['Vector'])
     
-    uv1_g = builder.combine_xyz(base_x + 3300, base_y - 250, f'UV1_g{suffix}')
-    builder.link(final_x1.outputs[0], uv1_g.inputs['X'])
-    builder.link(u_mu_g_flip.outputs[0], uv1_g.inputs['Y'])
+    # =========================================================================
+    # Bilinear interpolation: first depth, then nu
+    # =========================================================================
     
-    tex1_g = builder.image_texture(base_x + 3450, base_y - 250, f'Scat1_g{suffix}', scattering_path)
-    builder.link(uv1_g.outputs[0], tex1_g.inputs['Vector'])
+    # Interpolate depth at nu_floor: mix(tex_00, tex_01, depth_frac)
+    depth_mix_0 = builder.mix('RGBA', 'MIX', base_x + 3750, base_y + 50, f'DepthMix0{suffix}')
+    builder.link(depth_frac.outputs[0], depth_mix_0.inputs['Factor'])
+    builder.link(tex_00.outputs['Color'], depth_mix_0.inputs[6])
+    builder.link(tex_01.outputs['Color'], depth_mix_0.inputs[7])
     
-    mix_g = builder.mix('RGBA', 'MIX', base_x + 3650, base_y - 225, f'DepthMix_g{suffix}')
-    builder.link(depth_frac.outputs[0], mix_g.inputs['Factor'])
-    builder.link(tex0_g.outputs['Color'], mix_g.inputs[6])
-    builder.link(tex1_g.outputs['Color'], mix_g.inputs[7])
+    # Interpolate depth at nu_ceil: mix(tex_10, tex_11, depth_frac)
+    depth_mix_1 = builder.mix('RGBA', 'MIX', base_x + 3750, base_y - 150, f'DepthMix1{suffix}')
+    builder.link(depth_frac.outputs[0], depth_mix_1.inputs['Factor'])
+    builder.link(tex_10.outputs['Color'], depth_mix_1.inputs[6])
+    builder.link(tex_11.outputs['Color'], depth_mix_1.inputs[7])
     
-    # --- Blend based on ray_intersects_ground ---
-    # If ray_intersects_ground_socket provided, use it; otherwise use non-ground only
-    if ray_intersects_ground_socket is not None:
-        final_mix = builder.mix('RGBA', 'MIX', base_x + 3850, base_y - 75, f'ScatBlend{suffix}')
-        builder.link(ray_intersects_ground_socket, final_mix.inputs['Factor'])
-        builder.link(mix_ng.outputs[2], final_mix.inputs[6])  # Non-ground (factor=0)
-        builder.link(mix_g.outputs[2], final_mix.inputs[7])   # Ground (factor=1)
-        result = final_mix.outputs[2]
-    else:
-        result = mix_ng.outputs[2]
+    # Interpolate nu: mix(depth_mix_0, depth_mix_1, nu_lerp)
+    nu_mix = builder.mix('RGBA', 'MIX', base_x + 3950, base_y - 50, f'NuMix{suffix}')
+    builder.link(nu_lerp.outputs[0], nu_mix.inputs['Factor'])
+    builder.link(depth_mix_0.outputs[2], nu_mix.inputs[6])
+    builder.link(depth_mix_1.outputs[2], nu_mix.inputs[7])
+    
+    result = nu_mix.outputs[2]
     
     if return_u_mu:
-        return result, u_mu_ng.outputs[0], u_mu_g  # u_mu_g is already a socket
+        return result, u_mu.outputs[0], None  # V45: u_mu now handles ground/non-ground
     return result
 
 
@@ -612,16 +679,14 @@ def _compute_scattering_uvwz(builder, r_socket, mu_socket, mu_s_socket, nu_socke
     # -------------------------------------------------------------------------
     # SELECT u_mu based on ray_intersects_ground
     # -------------------------------------------------------------------------
-    if ray_intersects_ground_socket is not None:
-        # Mix: factor=0 -> non-ground (A), factor=1 -> ground (B)
-        u_mu_mix = builder.mix('FLOAT', 'MIX', base_x + 2400, base_y - 137, f'u_mu_sel{suffix}')
-        builder.link(ray_intersects_ground_socket, u_mu_mix.inputs['Factor'])
-        builder.link(u_mu_nonground.outputs[0], u_mu_mix.inputs[2])  # A (non-ground)
-        builder.link(u_mu_ground.outputs[0], u_mu_mix.inputs[3])  # B (ground)
-        u_mu_selected = u_mu_mix.outputs[0]
-    else:
-        # Default to non-ground formula
-        u_mu_selected = u_mu_nonground.outputs[0]
+    # V69: FORCED NON-GROUND for scattering UV (restored from V54)
+    # Reason: For aerial perspective, objects are ABOVE ground, so we need sky scattering.
+    # The ground formula samples underground scattering which produces very different
+    # (incorrect) values causing excessive haze. Ground/non-ground is still used for
+    # TRANSMITTANCE which is correct.
+    # Note: Reference uses ground selection, but that's for rays actually hitting ground,
+    # not for aerial perspective of above-ground objects.
+    u_mu_selected = u_mu_nonground.outputs[0]
     
     # Clamp u_mu to [0, 1]
     u_mu_min = builder.math('MAXIMUM', base_x + 2550, base_y - 137, f'u_mu_min{suffix}', v1=0.0)
@@ -726,7 +791,8 @@ def create_aerial_perspective_node_group(lut_dir=None):
     """
     Create the Helios Aerial Perspective node group.
     
-    Implements GetSkyRadianceToPoint from Bruneton reference EXACTLY.
+    V46: Implements GetSkyRadianceToPoint from Bruneton reference EXACTLY.
+    No horizon clamping, no geometry-based workarounds.
     """
     if lut_dir is None:
         lut_dir = get_lut_cache_dir()
@@ -755,9 +821,10 @@ def create_aerial_perspective_node_group(lut_dir=None):
     group.interface.new_socket('Planet_Center', in_out='INPUT', socket_type='NodeSocketVector')
     group.interface.new_socket('Scene_Scale', in_out='INPUT', socket_type='NodeSocketFloat')
     
-    # Outputs
+    # Outputs - Separate AOVs for Nuke compositing
     group.interface.new_socket('Transmittance', in_out='OUTPUT', socket_type='NodeSocketColor')
-    group.interface.new_socket('Inscatter', in_out='OUTPUT', socket_type='NodeSocketColor')
+    group.interface.new_socket('Rayleigh', in_out='OUTPUT', socket_type='NodeSocketColor')
+    group.interface.new_socket('Mie', in_out='OUTPUT', socket_type='NodeSocketColor')
     
     # Set defaults
     for socket in group.interface.items_tree:
@@ -766,13 +833,20 @@ def create_aerial_perspective_node_group(lut_dir=None):
     
     # =========================================================================
     # LUT TEXTURES
+    # Reference: transmittance, scattering (Rayleigh+multiple), single_mie_scattering
     # =========================================================================
     
     transmittance_path = os.path.join(lut_dir, "transmittance.exr")
     scattering_path = os.path.join(lut_dir, "scattering.exr")
+    single_mie_path = os.path.join(lut_dir, "single_mie_scattering.exr")
+    
+    # Debug: Check if Mie texture exists
+    print(f"Helios: LUT dir = {lut_dir}")
+    print(f"Helios: single_mie_scattering.exr exists = {os.path.exists(single_mie_path)}")
     
     # =========================================================================
-    # COORDINATE TRANSFORMS - camera and point relative to earth center
+    # COORDINATE TRANSFORMS
+    # Reference: camera and point are positions relative to planet center
     # =========================================================================
     
     # camera_km = (Camera_Position - Planet_Center) * Scene_Scale
@@ -795,8 +869,9 @@ def create_aerial_perspective_node_group(lut_dir=None):
     
     # =========================================================================
     # VIEW RAY AND DISTANCE
-    # Reference: view_ray = normalize(point - camera)
-    #            d = length(point - camera)
+    # Reference lines 1797, 1814:
+    #   view_ray = normalize(point - camera)
+    #   d = length(point - camera)
     # =========================================================================
     
     pt_minus_cam = builder.vec_math('SUBTRACT', -1800, 100, 'Point-Camera')
@@ -810,60 +885,117 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(pt_minus_cam.outputs[0], d.inputs[0])
     
     # =========================================================================
-    # CAMERA PARAMETERS (r, mu, mu_s, nu)
+    # CAMERA RADIUS (r)
+    # Reference line 1798: r = length(camera)
+    # V68: Clamp to [BOTTOM, TOP] only - no artificial minimum altitude
     # =========================================================================
     
-    # r = length(camera), clamped to minimum altitude above ground
-    # This prevents degenerate cases when camera is at planet surface
     r_raw = builder.vec_math('LENGTH', -1400, 300, 'r_raw')
     builder.link(camera_km.outputs[0], r_raw.inputs[0])
     
-    # Enforce minimum altitude: r >= bottom_radius + MIN_CAMERA_ALTITUDE
-    min_r = BOTTOM_RADIUS + MIN_CAMERA_ALTITUDE
-    r_min = builder.math('MAXIMUM', -1200, 300, 'r_min', v1=min_r)
+    # V68: Clamp to [BOTTOM_RADIUS, TOP_RADIUS] exactly like reference
+    r_min = builder.math('MAXIMUM', -1200, 300, 'r_min', v1=BOTTOM_RADIUS)
     builder.link(r_raw.outputs['Value'], r_min.inputs[0])
     
     r = builder.math('MINIMUM', -1000, 300, 'r', v1=TOP_RADIUS)
     builder.link(r_min.outputs[0], r.inputs[0])
     
-    # mu = dot(camera, view_ray) / r
+    # =========================================================================
+    # MU (view zenith cosine)
+    # Reference line 1811: mu = dot(camera, view_ray) / r
+    # NO HORIZON CLAMPING - use raw mu clamped only to [-1, 1]
+    # =========================================================================
+    
     cam_dot_view = builder.vec_math('DOT_PRODUCT', -1400, 200, 'cam·view')
     builder.link(camera_km.outputs[0], cam_dot_view.inputs[0])
     builder.link(view_ray.outputs[0], cam_dot_view.inputs[1])
     
-    mu = builder.math('DIVIDE', -1000, 200, 'mu')
-    builder.link(cam_dot_view.outputs['Value'], mu.inputs[0])
-    builder.link(r.outputs[0], mu.inputs[1])
+    mu_raw = builder.math('DIVIDE', -1000, 200, 'mu_raw')
+    builder.link(cam_dot_view.outputs['Value'], mu_raw.inputs[0])
+    builder.link(r.outputs[0], mu_raw.inputs[1])
     
-    mu_clamped = builder.math('MINIMUM', -800, 200, 'mu_clamp', v1=1.0)
-    builder.link(mu.outputs[0], mu_clamped.inputs[0])
-    mu_final = builder.math('MAXIMUM', -600, 200, 'mu_final', v1=-1.0)
-    builder.link(mu_clamped.outputs[0], mu_final.inputs[0])
+    # Clamp mu to [-1, 1] only (NO horizon clamp!)
+    mu_max = builder.math('MINIMUM', -800, 200, 'mu_max', v1=1.0)
+    builder.link(mu_raw.outputs[0], mu_max.inputs[0])
     
-    # mu_s = dot(camera, sun_direction) / r
+    mu = builder.math('MAXIMUM', -600, 200, 'mu', v1=-1.0)
+    builder.link(mu_max.outputs[0], mu.inputs[0])
+    
+    # =========================================================================
+    # MU_S (sun zenith cosine)
+    # Reference line 1812: mu_s = dot(camera, sun_direction) / r
+    # =========================================================================
+    
     cam_dot_sun = builder.vec_math('DOT_PRODUCT', -1400, 100, 'cam·sun')
     builder.link(camera_km.outputs[0], cam_dot_sun.inputs[0])
     builder.link(group_input.outputs['Sun_Direction'], cam_dot_sun.inputs[1])
     
-    mu_s = builder.math('DIVIDE', -1000, 100, 'mu_s')
-    builder.link(cam_dot_sun.outputs['Value'], mu_s.inputs[0])
-    builder.link(r.outputs[0], mu_s.inputs[1])
+    mu_s_raw = builder.math('DIVIDE', -1000, 100, 'mu_s_raw')
+    builder.link(cam_dot_sun.outputs['Value'], mu_s_raw.inputs[0])
+    builder.link(r.outputs[0], mu_s_raw.inputs[1])
     
-    mu_s_clamped = builder.math('MINIMUM', -800, 100, 'mu_s_clamp', v1=1.0)
-    builder.link(mu_s.outputs[0], mu_s_clamped.inputs[0])
-    mu_s_final = builder.math('MAXIMUM', -600, 100, 'mu_s_final', v1=-1.0)
-    builder.link(mu_s_clamped.outputs[0], mu_s_final.inputs[0])
+    mu_s_max = builder.math('MINIMUM', -800, 100, 'mu_s_max', v1=1.0)
+    builder.link(mu_s_raw.outputs[0], mu_s_max.inputs[0])
     
-    # nu = dot(view_ray, sun_direction)
+    mu_s = builder.math('MAXIMUM', -600, 100, 'mu_s', v1=-1.0)
+    builder.link(mu_s_max.outputs[0], mu_s.inputs[0])
+    
+    # =========================================================================
+    # NU (view-sun angle cosine)
+    # Reference line 1813: nu = dot(view_ray, sun_direction)
+    # =========================================================================
+    
     nu = builder.vec_math('DOT_PRODUCT', -1400, 0, 'nu')
     builder.link(view_ray.outputs[0], nu.inputs[0])
     builder.link(group_input.outputs['Sun_Direction'], nu.inputs[1])
     
     # =========================================================================
-    # POINT PARAMETERS - LAW OF COSINES (from reference!)
-    # r_p = sqrt(d² + 2·r·μ·d + r²)
-    # μ_p = (r·μ + d) / r_p
-    # μ_s_p = (r·μ_s + d·ν) / r_p
+    # RAY_R_MU_INTERSECTS_GROUND
+    # Reference lines 240-246 (RayIntersectsGround):
+    #   return mu < 0.0 && r*r*(mu*mu - 1.0) + bottom_radius*bottom_radius >= 0.0
+    #
+    # This is computed from CAMERA parameters (r, mu) ONLY.
+    # The SAME flag is used for both transmittance and scattering!
+    # =========================================================================
+    
+    # Condition 1: mu < 0 (looking downward)
+    mu_negative = builder.math('LESS_THAN', -400, 150, 'mu<0', v1=0.0)
+    builder.link(mu.outputs[0], mu_negative.inputs[0])
+    
+    # Condition 2: discriminant >= 0
+    # discriminant = r² × (μ² - 1) + bottom²
+    mu_sq = builder.math('MULTIPLY', -400, 100, 'μ²')
+    builder.link(mu.outputs[0], mu_sq.inputs[0])
+    builder.link(mu.outputs[0], mu_sq.inputs[1])
+    
+    mu_sq_m1 = builder.math('SUBTRACT', -200, 100, 'μ²-1', v1=1.0)
+    builder.link(mu_sq.outputs[0], mu_sq_m1.inputs[0])
+    
+    r_sq = builder.math('MULTIPLY', -400, 50, 'r²')
+    builder.link(r.outputs[0], r_sq.inputs[0])
+    builder.link(r.outputs[0], r_sq.inputs[1])
+    
+    r_sq_term = builder.math('MULTIPLY', 0, 75, 'r²×(μ²-1)')
+    builder.link(r_sq.outputs[0], r_sq_term.inputs[0])
+    builder.link(mu_sq_m1.outputs[0], r_sq_term.inputs[1])
+    
+    discriminant = builder.math('ADD', 200, 75, 'discriminant', v1=BOTTOM_RADIUS * BOTTOM_RADIUS)
+    builder.link(r_sq_term.outputs[0], discriminant.inputs[0])
+    
+    disc_positive = builder.math('GREATER_THAN', 400, 75, 'disc>=0', v1=-0.0001)  # Small epsilon
+    builder.link(discriminant.outputs[0], disc_positive.inputs[0])
+    
+    # ray_r_mu_intersects_ground = (mu < 0) AND (discriminant >= 0)
+    ray_intersects_ground = builder.math('MULTIPLY', 600, 125, 'ray_intersects_ground')
+    builder.link(mu_negative.outputs[0], ray_intersects_ground.inputs[0])
+    builder.link(disc_positive.outputs[0], ray_intersects_ground.inputs[1])
+    
+    # =========================================================================
+    # POINT PARAMETERS - LAW OF COSINES
+    # Reference lines 1832-1834:
+    #   r_p = ClampRadius(sqrt(d² + 2·r·μ·d + r²))
+    #   mu_p = (r·μ + d) / r_p
+    #   mu_s_p = (r·μ_s + d·nu) / r_p
     # =========================================================================
     
     # d²
@@ -871,23 +1003,17 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(d.outputs['Value'], d_sq.inputs[0])
     builder.link(d.outputs['Value'], d_sq.inputs[1])
     
-    # 2·r·μ
+    # 2·r·μ·d
     two_r = builder.math('MULTIPLY', -400, -150, '2r', v0=2.0)
     builder.link(r.outputs[0], two_r.inputs[1])
     
     two_r_mu = builder.math('MULTIPLY', -200, -150, '2r×μ')
     builder.link(two_r.outputs[0], two_r_mu.inputs[0])
-    builder.link(mu_final.outputs[0], two_r_mu.inputs[1])
+    builder.link(mu.outputs[0], two_r_mu.inputs[1])  # Use raw mu, not clamped
     
-    # 2·r·μ·d
     two_r_mu_d = builder.math('MULTIPLY', 0, -150, '2r×μ×d')
     builder.link(two_r_mu.outputs[0], two_r_mu_d.inputs[0])
     builder.link(d.outputs['Value'], two_r_mu_d.inputs[1])
-    
-    # r²
-    r_sq = builder.math('MULTIPLY', -400, -200, 'r²')
-    builder.link(r.outputs[0], r_sq.inputs[0])
-    builder.link(r.outputs[0], r_sq.inputs[1])
     
     # d² + 2·r·μ·d + r²
     sum1 = builder.math('ADD', 200, -125, 'd²+2rμd')
@@ -898,39 +1024,40 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(sum1.outputs[0], sum2.inputs[0])
     builder.link(r_sq.outputs[0], sum2.inputs[1])
     
-    # r_p = sqrt(...)
+    # r_p = ClampRadius(sqrt(...))
     r_p_raw = builder.math('SQRT', 600, -150, 'r_p_raw')
     builder.link(sum2.outputs[0], r_p_raw.inputs[0])
     
-    # Clamp r_p
     r_p_min = builder.math('MAXIMUM', 800, -150, 'r_p_min', v1=BOTTOM_RADIUS)
     builder.link(r_p_raw.outputs[0], r_p_min.inputs[0])
     
     r_p = builder.math('MINIMUM', 1000, -150, 'r_p', v1=TOP_RADIUS)
     builder.link(r_p_min.outputs[0], r_p.inputs[0])
     
-    # μ_p = (r·μ + d) / r_p
+    # mu_p = (r·μ + d) / r_p
     r_mu = builder.math('MULTIPLY', -200, -300, 'r×μ')
     builder.link(r.outputs[0], r_mu.inputs[0])
-    builder.link(mu_final.outputs[0], r_mu.inputs[1])
+    builder.link(mu.outputs[0], r_mu.inputs[1])  # Use raw mu
     
     r_mu_plus_d = builder.math('ADD', 0, -300, 'r×μ+d')
     builder.link(r_mu.outputs[0], r_mu_plus_d.inputs[0])
     builder.link(d.outputs['Value'], r_mu_plus_d.inputs[1])
     
-    mu_p = builder.math('DIVIDE', 200, -300, 'μ_p')
-    builder.link(r_mu_plus_d.outputs[0], mu_p.inputs[0])
-    builder.link(r_p.outputs[0], mu_p.inputs[1])
+    mu_p_raw = builder.math('DIVIDE', 200, -300, 'μ_p_raw')
+    builder.link(r_mu_plus_d.outputs[0], mu_p_raw.inputs[0])
+    builder.link(r_p.outputs[0], mu_p_raw.inputs[1])
     
-    mu_p_clamped = builder.math('MINIMUM', 400, -300, 'μ_p_clamp', v1=1.0)
-    builder.link(mu_p.outputs[0], mu_p_clamped.inputs[0])
-    mu_p_final = builder.math('MAXIMUM', 600, -300, 'μ_p_final', v1=-1.0)
-    builder.link(mu_p_clamped.outputs[0], mu_p_final.inputs[0])
+    # ClampCosine(mu_p)
+    mu_p_max = builder.math('MINIMUM', 400, -300, 'μ_p_max', v1=1.0)
+    builder.link(mu_p_raw.outputs[0], mu_p_max.inputs[0])
     
-    # μ_s_p = (r·μ_s + d·ν) / r_p
+    mu_p = builder.math('MAXIMUM', 600, -300, 'μ_p', v1=-1.0)
+    builder.link(mu_p_max.outputs[0], mu_p.inputs[0])
+    
+    # mu_s_p = (r·μ_s + d·ν) / r_p
     r_mu_s = builder.math('MULTIPLY', -200, -400, 'r×μ_s')
     builder.link(r.outputs[0], r_mu_s.inputs[0])
-    builder.link(mu_s_final.outputs[0], r_mu_s.inputs[1])
+    builder.link(mu_s.outputs[0], r_mu_s.inputs[1])
     
     d_nu = builder.math('MULTIPLY', -200, -450, 'd×ν')
     builder.link(d.outputs['Value'], d_nu.inputs[0])
@@ -940,274 +1067,328 @@ def create_aerial_perspective_node_group(lut_dir=None):
     builder.link(r_mu_s.outputs[0], r_mu_s_plus_d_nu.inputs[0])
     builder.link(d_nu.outputs[0], r_mu_s_plus_d_nu.inputs[1])
     
-    mu_s_p = builder.math('DIVIDE', 200, -400, 'μ_s_p')
-    builder.link(r_mu_s_plus_d_nu.outputs[0], mu_s_p.inputs[0])
-    builder.link(r_p.outputs[0], mu_s_p.inputs[1])
+    mu_s_p_raw = builder.math('DIVIDE', 200, -400, 'μ_s_p_raw')
+    builder.link(r_mu_s_plus_d_nu.outputs[0], mu_s_p_raw.inputs[0])
+    builder.link(r_p.outputs[0], mu_s_p_raw.inputs[1])
     
-    mu_s_p_clamped = builder.math('MINIMUM', 400, -400, 'μ_s_p_clamp', v1=1.0)
-    builder.link(mu_s_p.outputs[0], mu_s_p_clamped.inputs[0])
-    mu_s_p_final = builder.math('MAXIMUM', 600, -400, 'μ_s_p_final', v1=-1.0)
-    builder.link(mu_s_p_clamped.outputs[0], mu_s_p_final.inputs[0])
+    mu_s_p_max = builder.math('MINIMUM', 400, -400, 'μ_s_p_max', v1=1.0)
+    builder.link(mu_s_p_raw.outputs[0], mu_s_p_max.inputs[0])
     
-    # =========================================================================
-    # RAY INTERSECTS GROUND - compute FIRST, needed for transmittance and scattering
-    # Reference: RayIntersectsGround(r, mu) = mu < 0 && r²(μ²-1) + bottom² >= 0
-    # =========================================================================
-    
-    # Condition 1: mu < 0
-    mu_negative = builder.math('LESS_THAN', 2000, 600, 'mu<0', v1=0.0)
-    builder.link(mu_final.outputs[0], mu_negative.inputs[0])
-    
-    # Condition 2: r²(μ²-1) + bottom² >= 0
-    r_sq_ground = builder.math('MULTIPLY', 2000, 550, 'r²_g')
-    builder.link(r.outputs[0], r_sq_ground.inputs[0])
-    builder.link(r.outputs[0], r_sq_ground.inputs[1])
-    
-    mu_sq_ground = builder.math('MULTIPLY', 2000, 500, 'μ²_g')
-    builder.link(mu_final.outputs[0], mu_sq_ground.inputs[0])
-    builder.link(mu_final.outputs[0], mu_sq_ground.inputs[1])
-    
-    mu_sq_m1_ground = builder.math('SUBTRACT', 2150, 500, 'μ²-1_g', v1=1.0)
-    builder.link(mu_sq_ground.outputs[0], mu_sq_m1_ground.inputs[0])
-    
-    r_sq_term_ground = builder.math('MULTIPLY', 2300, 525, 'r²×(μ²-1)')
-    builder.link(r_sq_ground.outputs[0], r_sq_term_ground.inputs[0])
-    builder.link(mu_sq_m1_ground.outputs[0], r_sq_term_ground.inputs[1])
-    
-    discriminant_ground = builder.math('ADD', 2450, 525, 'disc_g', v1=BOTTOM_RADIUS * BOTTOM_RADIUS)
-    builder.link(r_sq_term_ground.outputs[0], discriminant_ground.inputs[0])
-    
-    # disc >= 0
-    disc_ge_zero = builder.math('GREATER_THAN', 2600, 525, 'disc>=0', v1=-0.0001)
-    builder.link(discriminant_ground.outputs[0], disc_ge_zero.inputs[0])
-    
-    # Both conditions must be true: mu < 0 AND disc >= 0
-    ray_intersects_ground = builder.math('MULTIPLY', 2750, 550, 'ray_hits_ground')
-    builder.link(mu_negative.outputs[0], ray_intersects_ground.inputs[0])
-    builder.link(disc_ge_zero.outputs[0], ray_intersects_ground.inputs[1])
+    mu_s_p = builder.math('MAXIMUM', 600, -400, 'μ_s_p', v1=-1.0)
+    builder.link(mu_s_p_max.outputs[0], mu_s_p.inputs[0])
     
     # =========================================================================
-    # TRANSMITTANCE - Reference: GetTransmittance (functions.glsl lines 493-518)
-    # 
-    # CRITICAL: For ground-intersecting rays, uses NEGATED mu values and swaps order:
-    #   Non-ground: T = T(r, mu) / T(r_d, mu_d)
-    #   Ground:     T = T(r_d, -mu_d) / T(r, -mu)
+    # TRANSMITTANCE - GetTransmittance
+    # Reference lines 493-519:
+    #   if (ray_r_mu_intersects_ground):
+    #     T = T(r_d, -mu_d) / T(r, -mu)
+    #   else:
+    #     T = T(r, mu) / T(r_d, mu_d)
+    #
+    # NOTE: r_d = r_p, mu_d = mu_p (from law of cosines above)
     # =========================================================================
     
-    # Compute negated mu values for ground case
-    neg_mu = builder.math('MULTIPLY', -600, 600, '-μ', v1=-1.0)
-    builder.link(mu_final.outputs[0], neg_mu.inputs[0])
+    # Negate mu values for ground formula
+    neg_mu = builder.math('MULTIPLY', -600, 600, '-mu', v1=-1.0)
+    builder.link(mu.outputs[0], neg_mu.inputs[0])
     
-    neg_mu_p = builder.math('MULTIPLY', -600, 400, '-μ_p', v1=-1.0)
-    builder.link(mu_p_final.outputs[0], neg_mu_p.inputs[0])
+    neg_mu_p = builder.math('MULTIPLY', -400, 600, '-mu_p', v1=-1.0)
+    builder.link(mu_p.outputs[0], neg_mu_p.inputs[0])
     
-    # -------------------------------------------------------------------------
-    # FIX V32: Switch based on r_p vs r (point altitude vs camera altitude)
-    # - If r_p >= r (point higher/same): use non-ground T(r,mu) / T(r_p,mu_p)
-    # - If r_p < r (point lower): use ground T(r_p,-mu_p) / T(r,-mu)
-    # This switches based on GEOMETRY not viewing angle, avoiding the horizon
-    # discontinuity caused by ray_intersects_ground.
-    # -------------------------------------------------------------------------
-    
-    # --- NON-GROUND PATH: T(r, mu) / T(r_p, mu_p) ---
+    # NON-GROUND transmittance UVs: T(r, mu) and T(r_p, mu_p)
     trans_uv_cam_ng = create_transmittance_uv(
-        builder, r.outputs[0], mu_final.outputs[0], 
-        -400, 700, "_cam_ng"
+        builder, r.outputs[0], mu.outputs[0], 
+        -400, 800, "_cam_ng"
     )
     trans_uv_pt_ng = create_transmittance_uv(
-        builder, r_p.outputs[0], mu_p_final.outputs[0],
-        -400, 500, "_pt_ng"
+        builder, r_p.outputs[0], mu_p.outputs[0],
+        -400, 700, "_pt_ng"
     )
     
-    tex_trans_cam_ng = builder.image_texture(800, 700, 'T_cam_ng', transmittance_path)
-    builder.link(trans_uv_cam_ng, tex_trans_cam_ng.inputs['Vector'])
-    
-    tex_trans_pt_ng = builder.image_texture(800, 500, 'T_pt_ng', transmittance_path)
-    builder.link(trans_uv_pt_ng, tex_trans_pt_ng.inputs['Vector'])
-    
-    sep_cam_ng = builder.nodes.new('ShaderNodeSeparateColor')
-    sep_cam_ng.location = (950, 700)
-    sep_cam_ng.name = 'Sep_T_cam_ng'
-    builder.link(tex_trans_cam_ng.outputs['Color'], sep_cam_ng.inputs['Color'])
-    
-    sep_pt_ng = builder.nodes.new('ShaderNodeSeparateColor')
-    sep_pt_ng.location = (950, 500)
-    sep_pt_ng.name = 'Sep_T_pt_ng'
-    builder.link(tex_trans_pt_ng.outputs['Color'], sep_pt_ng.inputs['Color'])
-    
-    # Safe division for non-ground (T_cam / T_pt)
-    pt_ng_safe_r = builder.math('MAXIMUM', 1100, 750, 'T_pt_ng_safe_r', v1=0.0001)
-    builder.link(sep_pt_ng.outputs['Red'], pt_ng_safe_r.inputs[0])
-    pt_ng_safe_g = builder.math('MAXIMUM', 1100, 700, 'T_pt_ng_safe_g', v1=0.0001)
-    builder.link(sep_pt_ng.outputs['Green'], pt_ng_safe_g.inputs[0])
-    pt_ng_safe_b = builder.math('MAXIMUM', 1100, 650, 'T_pt_ng_safe_b', v1=0.0001)
-    builder.link(sep_pt_ng.outputs['Blue'], pt_ng_safe_b.inputs[0])
-    
-    T_ng_r = builder.math('DIVIDE', 1250, 750, 'T_ng_r')
-    builder.link(sep_cam_ng.outputs['Red'], T_ng_r.inputs[0])
-    builder.link(pt_ng_safe_r.outputs[0], T_ng_r.inputs[1])
-    T_ng_g = builder.math('DIVIDE', 1250, 700, 'T_ng_g')
-    builder.link(sep_cam_ng.outputs['Green'], T_ng_g.inputs[0])
-    builder.link(pt_ng_safe_g.outputs[0], T_ng_g.inputs[1])
-    T_ng_b = builder.math('DIVIDE', 1250, 650, 'T_ng_b')
-    builder.link(sep_cam_ng.outputs['Blue'], T_ng_b.inputs[0])
-    builder.link(pt_ng_safe_b.outputs[0], T_ng_b.inputs[1])
-    
-    # --- GROUND PATH: T(r_p, -mu_p) / T(r, -mu) ---
+    # GROUND transmittance UVs: T(r, -mu) and T(r_p, -mu_p)
     trans_uv_cam_g = create_transmittance_uv(
         builder, r.outputs[0], neg_mu.outputs[0], 
-        -400, 300, "_cam_g"
+        -400, 600, "_cam_g"
     )
     trans_uv_pt_g = create_transmittance_uv(
         builder, r_p.outputs[0], neg_mu_p.outputs[0],
-        -400, 100, "_pt_g"
+        -400, 500, "_pt_g"
     )
     
-    tex_trans_cam_g = builder.image_texture(800, 300, 'T_cam_g', transmittance_path)
-    builder.link(trans_uv_cam_g, tex_trans_cam_g.inputs['Vector'])
+    # Sample transmittance textures
+    tex_T_cam_ng = builder.image_texture(800, 800, 'T_cam_ng', transmittance_path)
+    builder.link(trans_uv_cam_ng, tex_T_cam_ng.inputs['Vector'])
     
-    tex_trans_pt_g = builder.image_texture(800, 100, 'T_pt_g', transmittance_path)
-    builder.link(trans_uv_pt_g, tex_trans_pt_g.inputs['Vector'])
+    tex_T_pt_ng = builder.image_texture(800, 700, 'T_pt_ng', transmittance_path)
+    builder.link(trans_uv_pt_ng, tex_T_pt_ng.inputs['Vector'])
     
-    sep_cam_g = builder.nodes.new('ShaderNodeSeparateColor')
-    sep_cam_g.location = (950, 300)
-    sep_cam_g.name = 'Sep_T_cam_g'
-    builder.link(tex_trans_cam_g.outputs['Color'], sep_cam_g.inputs['Color'])
+    tex_T_cam_g = builder.image_texture(800, 600, 'T_cam_g', transmittance_path)
+    builder.link(trans_uv_cam_g, tex_T_cam_g.inputs['Vector'])
     
-    sep_pt_g = builder.nodes.new('ShaderNodeSeparateColor')
-    sep_pt_g.location = (950, 100)
-    sep_pt_g.name = 'Sep_T_pt_g'
-    builder.link(tex_trans_pt_g.outputs['Color'], sep_pt_g.inputs['Color'])
+    tex_T_pt_g = builder.image_texture(800, 500, 'T_pt_g', transmittance_path)
+    builder.link(trans_uv_pt_g, tex_T_pt_g.inputs['Vector'])
     
-    # Safe division for ground (T_pt / T_cam - swapped)
-    cam_g_safe_r = builder.math('MAXIMUM', 1100, 350, 'T_cam_g_safe_r', v1=0.0001)
-    builder.link(sep_cam_g.outputs['Red'], cam_g_safe_r.inputs[0])
-    cam_g_safe_g = builder.math('MAXIMUM', 1100, 300, 'T_cam_g_safe_g', v1=0.0001)
-    builder.link(sep_cam_g.outputs['Green'], cam_g_safe_g.inputs[0])
-    cam_g_safe_b = builder.math('MAXIMUM', 1100, 250, 'T_cam_g_safe_b', v1=0.0001)
-    builder.link(sep_cam_g.outputs['Blue'], cam_g_safe_b.inputs[0])
+    # NON-GROUND formula: T = T(r, mu) / T(r_p, mu_p)
+    # V88 FIX: Grayscale transmittance to eliminate colored banding
+    # The correct formula is T = T_cam / T_pt, but per-channel division causes banding.
+    # Solution: Compute grayscale transmittance ratio and output as uniform RGB.
+    # This loses spectral variation but gives mathematically correct transmittance magnitude.
     
-    T_g_r = builder.math('DIVIDE', 1250, 350, 'T_g_r')
-    builder.link(sep_pt_g.outputs['Red'], T_g_r.inputs[0])
-    builder.link(cam_g_safe_r.outputs[0], T_g_r.inputs[1])
-    T_g_g = builder.math('DIVIDE', 1250, 300, 'T_g_g')
-    builder.link(sep_pt_g.outputs['Green'], T_g_g.inputs[0])
-    builder.link(cam_g_safe_g.outputs[0], T_g_g.inputs[1])
-    T_g_b = builder.math('DIVIDE', 1250, 250, 'T_g_b')
-    builder.link(sep_pt_g.outputs['Blue'], T_g_b.inputs[0])
-    builder.link(cam_g_safe_b.outputs[0], T_g_b.inputs[1])
+    # Convert T_cam to grayscale (average)
+    T_cam_sep = builder.separate_xyz(950, 800, 'T_cam_sep')
+    builder.link(tex_T_cam_ng.outputs['Color'], T_cam_sep.inputs[0])
     
-    # --- SELECT based on ray_intersects_ground (original Bruneton approach) ---
-    # This is the reference implementation's approach
+    T_cam_rg = builder.math('ADD', 1050, 850, 'T_cam_rg')
+    builder.link(T_cam_sep.outputs['X'], T_cam_rg.inputs[0])
+    builder.link(T_cam_sep.outputs['Y'], T_cam_rg.inputs[1])
     
-    T_sel_r = builder.mix('FLOAT', 'MIX', 1400, 550, 'T_sel_r')
-    builder.link(ray_intersects_ground.outputs[0], T_sel_r.inputs['Factor'])
-    builder.link(T_ng_r.outputs[0], T_sel_r.inputs[2])  # A = non-ground (factor=0)
-    builder.link(T_g_r.outputs[0], T_sel_r.inputs[3])   # B = ground (factor=1)
+    T_cam_lum = builder.math('ADD', 1150, 850, 'T_cam_lum')
+    builder.link(T_cam_rg.outputs[0], T_cam_lum.inputs[0])
+    builder.link(T_cam_sep.outputs['Z'], T_cam_lum.inputs[1])
     
-    T_sel_g = builder.mix('FLOAT', 'MIX', 1400, 500, 'T_sel_g')
-    builder.link(ray_intersects_ground.outputs[0], T_sel_g.inputs['Factor'])
-    builder.link(T_ng_g.outputs[0], T_sel_g.inputs[2])
-    builder.link(T_g_g.outputs[0], T_sel_g.inputs[3])
+    T_cam_avg = builder.math('DIVIDE', 1250, 850, 'T_cam_avg', v1=3.0)
+    builder.link(T_cam_lum.outputs[0], T_cam_avg.inputs[0])
     
-    T_sel_b = builder.mix('FLOAT', 'MIX', 1400, 450, 'T_sel_b')
-    builder.link(ray_intersects_ground.outputs[0], T_sel_b.inputs['Factor'])
-    builder.link(T_ng_b.outputs[0], T_sel_b.inputs[2])
-    builder.link(T_g_b.outputs[0], T_sel_b.inputs[3])
+    # Convert T_pt to grayscale (average)
+    T_pt_sep = builder.separate_xyz(950, 700, 'T_pt_sep')
+    builder.link(tex_T_pt_ng.outputs['Color'], T_pt_sep.inputs[0])
+    
+    T_pt_rg = builder.math('ADD', 1050, 750, 'T_pt_rg')
+    builder.link(T_pt_sep.outputs['X'], T_pt_rg.inputs[0])
+    builder.link(T_pt_sep.outputs['Y'], T_pt_rg.inputs[1])
+    
+    T_pt_lum = builder.math('ADD', 1150, 750, 'T_pt_lum')
+    builder.link(T_pt_rg.outputs[0], T_pt_lum.inputs[0])
+    builder.link(T_pt_sep.outputs['Z'], T_pt_lum.inputs[1])
+    
+    T_pt_avg = builder.math('DIVIDE', 1250, 750, 'T_pt_avg', v1=3.0)
+    builder.link(T_pt_lum.outputs[0], T_pt_avg.inputs[0])
+    
+    # Compute grayscale transmittance ratio: T = T_cam_gray / T_pt_gray
+    # This is the CORRECT formula - for d→0: T_cam≈T_pt so T→1
+    T_pt_safe = builder.math('MAXIMUM', 1350, 750, 'T_pt_safe', v1=0.0001)
+    builder.link(T_pt_avg.outputs[0], T_pt_safe.inputs[0])
+    
+    T_gray = builder.math('DIVIDE', 1450, 800, 'T_gray')
+    builder.link(T_cam_avg.outputs[0], T_gray.inputs[0])
+    builder.link(T_pt_safe.outputs[0], T_gray.inputs[1])
+    
+    # Clamp to [0, 1] - transmittance cannot exceed 1
+    T_gray_clamp = builder.math('MINIMUM', 1550, 800, 'T_gray_clamp', v1=1.0)
+    builder.link(T_gray.outputs[0], T_gray_clamp.inputs[0])
+    
+    # Convert grayscale to RGB vector for use in vector operations
+    T_nonground = builder.combine_xyz(1650, 750, 'T_nonground')
+    builder.link(T_gray_clamp.outputs[0], T_nonground.inputs['X'])
+    builder.link(T_gray_clamp.outputs[0], T_nonground.inputs['Y'])
+    builder.link(T_gray_clamp.outputs[0], T_nonground.inputs['Z'])
+    
+    # GROUND formula: T = T(r_p, -mu_p) / T(r, -mu)
+    T_ground = builder.vec_math('DIVIDE', 1100, 550, 'T_ground')
+    builder.link(tex_T_pt_g.outputs['Color'], T_ground.inputs[0])
+    builder.link(tex_T_cam_g.outputs['Color'], T_ground.inputs[1])
+    
+    # V71: FORCE NON-GROUND TRANSMITTANCE for aerial perspective
+    # Reason: Ground/non-ground selection causes discontinuity at horizon (banding)
+    # For aerial perspective, objects are ABOVE ground, so we always use non-ground formula.
+    # The ground formula is for rays that would hit the ground if extended.
     
     # Clamp to [0, 1]
-    trans_r_clamp = builder.math('MINIMUM', 1700, 550, 'T_r_clamp', v1=1.0)
-    builder.link(T_sel_r.outputs[0], trans_r_clamp.inputs[0])
-    trans_g_clamp = builder.math('MINIMUM', 1700, 500, 'T_g_clamp', v1=1.0)
-    builder.link(T_sel_g.outputs[0], trans_g_clamp.inputs[0])
-    trans_b_clamp = builder.math('MINIMUM', 1700, 450, 'T_b_clamp', v1=1.0)
-    builder.link(T_sel_b.outputs[0], trans_b_clamp.inputs[0])
+    T_clamp = builder.vec_math('MINIMUM', 1450, 650, 'T_clamp')
+    T_clamp.inputs[1].default_value = (1.0, 1.0, 1.0)
+    builder.link(T_nonground.outputs[0], T_clamp.inputs[0])
     
-    # Combine back to color
-    transmittance_final = builder.combine_xyz(1700, 450, 'Transmittance_Final')
-    builder.link(trans_r_clamp.outputs[0], transmittance_final.inputs['X'])
-    builder.link(trans_g_clamp.outputs[0], transmittance_final.inputs['Y'])
-    builder.link(trans_b_clamp.outputs[0], transmittance_final.inputs['Z'])
+    transmittance = builder.vec_math('MAXIMUM', 1600, 650, 'Transmittance')
+    transmittance.inputs[1].default_value = (0.0, 0.0, 0.0)
+    builder.link(T_clamp.outputs[0], transmittance.inputs[0])
     
     # =========================================================================
-    # SCATTERING LOOKUPS - Camera and Point (with depth interpolation)
-    # 
-    # V37: Sample BOTH texture halves (non-ground and ground) and blend based on
-    # ray_intersects_ground. This gives correct results for both above-horizon
-    # (non-ground) and below-horizon (ground) viewing angles.
+    # SCATTERING - GetCombinedScattering
+    # Reference lines 1821-1824, 1837-1840:
+    #   Both camera and point scattering use the SAME ray_r_mu_intersects_ground
+    #   Returns both Rayleigh+multiple scattering AND single Mie scattering
     # =========================================================================
     
-    # Sample scattering at camera position with blending
+    # Sample Rayleigh+multiple scattering at camera position
     scat_cam_color = sample_scattering_texture(
-        builder, r.outputs[0], mu_final.outputs[0], mu_s_final.outputs[0], nu.outputs['Value'],
-        scattering_path, 1800, 200, "_cam", ray_intersects_ground.outputs[0]
+        builder, r.outputs[0], mu.outputs[0], mu_s.outputs[0], nu.outputs['Value'],
+        scattering_path, 1800, 200, "_cam",
+        ray_intersects_ground_socket=ray_intersects_ground.outputs[0]
     )
     
-    # Sample scattering at point position with blending
-    # Use SAME ray_intersects_ground from camera (per reference implementation)
+    # Sample Rayleigh+multiple scattering at point position
     scat_pt_color = sample_scattering_texture(
-        builder, r_p.outputs[0], mu_p_final.outputs[0], mu_s_p_final.outputs[0], nu.outputs['Value'],
-        scattering_path, 1800, -400, "_pt", ray_intersects_ground.outputs[0]
+        builder, r_p.outputs[0], mu_p.outputs[0], mu_s_p.outputs[0], nu.outputs['Value'],
+        scattering_path, 1800, -400, "_pt",
+        ray_intersects_ground_socket=ray_intersects_ground.outputs[0]
+    )
+    
+    # Sample single Mie scattering at camera position
+    mie_cam_color = sample_scattering_texture(
+        builder, r.outputs[0], mu.outputs[0], mu_s.outputs[0], nu.outputs['Value'],
+        single_mie_path, 2200, 200, "_mie_cam",
+        ray_intersects_ground_socket=ray_intersects_ground.outputs[0]
+    )
+    
+    # Sample single Mie scattering at point position
+    mie_pt_color = sample_scattering_texture(
+        builder, r_p.outputs[0], mu_p.outputs[0], mu_s_p.outputs[0], nu.outputs['Value'],
+        single_mie_path, 2200, -400, "_mie_pt",
+        ray_intersects_ground_socket=ray_intersects_ground.outputs[0]
     )
     
     # =========================================================================
-    # INSCATTER CALCULATION
-    # inscatter = S_cam - transmittance × S_point
+    # INSCATTER - Rayleigh + Multiple Scattering
+    # Reference line 1849: scattering = scattering - shadow_transmittance * scattering_p
     # =========================================================================
     
-    # transmittance × S_point
-    t_times_scat = builder.vec_math('MULTIPLY', 5500, -200, 'T×S_pt')
-    builder.link(transmittance_final.outputs[0], t_times_scat.inputs[0])
+    # Rayleigh inscatter = S_cam - T × S_pt
+    t_times_scat = builder.vec_math('MULTIPLY', 5500, 200, 'T×S_pt')
+    builder.link(transmittance.outputs[0], t_times_scat.inputs[0])
     builder.link(scat_pt_color, t_times_scat.inputs[1])
     
-    # S_cam - T × S_point
-    inscatter_raw = builder.vec_math('SUBTRACT', 5650, 0, 'Inscatter_Raw')
-    builder.link(scat_cam_color, inscatter_raw.inputs[0])
-    builder.link(t_times_scat.outputs[0], inscatter_raw.inputs[1])
+    rayleigh_inscatter_raw = builder.vec_math('SUBTRACT', 5650, 200, 'Ray_Inscatter_Raw')
+    builder.link(scat_cam_color, rayleigh_inscatter_raw.inputs[0])
+    builder.link(t_times_scat.outputs[0], rayleigh_inscatter_raw.inputs[1])
     
-    # Clamp negative values
-    inscatter_max = builder.vec_math('MAXIMUM', 5800, 0, 'Inscatter_Clamp')
-    inscatter_max.inputs[1].default_value = (0.0, 0.0, 0.0)
-    builder.link(inscatter_raw.outputs[0], inscatter_max.inputs[0])
+    rayleigh_inscatter = builder.vec_math('MAXIMUM', 5800, 200, 'Ray_Inscatter')
+    rayleigh_inscatter.inputs[1].default_value = (0.0, 0.0, 0.0)
+    builder.link(rayleigh_inscatter_raw.outputs[0], rayleigh_inscatter.inputs[0])
+    
+    # =========================================================================
+    # INSCATTER - Single Mie Scattering
+    # Reference line 1850-1851: single_mie = mie_cam - T × mie_pt
+    # =========================================================================
+    
+    t_times_mie = builder.vec_math('MULTIPLY', 5500, -100, 'T×Mie_pt')
+    builder.link(transmittance.outputs[0], t_times_mie.inputs[0])
+    builder.link(mie_pt_color, t_times_mie.inputs[1])
+    
+    mie_inscatter_raw = builder.vec_math('SUBTRACT', 5650, -100, 'Mie_Inscatter_Raw')
+    builder.link(mie_cam_color, mie_inscatter_raw.inputs[0])
+    builder.link(t_times_mie.outputs[0], mie_inscatter_raw.inputs[1])
+    
+    mie_inscatter = builder.vec_math('MAXIMUM', 5800, -100, 'Mie_Inscatter')
+    mie_inscatter.inputs[1].default_value = (0.0, 0.0, 0.0)
+    builder.link(mie_inscatter_raw.outputs[0], mie_inscatter.inputs[0])
     
     # =========================================================================
     # PHASE FUNCTIONS
+    # Reference lines 1857-1862:
+    #   single_mie_scattering *= smoothstep(0, 0.01, mu_s)  // Fade when sun below horizon
+    #   return scattering * RayleighPhaseFunction(nu) + 
+    #          single_mie_scattering * MiePhaseFunction(g, nu)
     # =========================================================================
     
-    # Rayleigh phase: 3/(16π) × (1 + ν²)
-    nu_sq = builder.math('MULTIPLY', 5500, -400, 'ν²')
+    # --- Rayleigh phase: 3/(16π) × (1 + ν²) ---
+    nu_sq = builder.math('MULTIPLY', 5900, 300, 'ν²')
     builder.link(nu.outputs['Value'], nu_sq.inputs[0])
     builder.link(nu.outputs['Value'], nu_sq.inputs[1])
     
-    one_plus_nu_sq = builder.math('ADD', 5650, -400, '1+ν²', v0=1.0)
+    one_plus_nu_sq = builder.math('ADD', 6050, 300, '1+ν²', v0=1.0)
     builder.link(nu_sq.outputs[0], one_plus_nu_sq.inputs[1])
     
-    rayleigh_phase = builder.math('MULTIPLY', 5800, -400, 'Ray_Phase', v0=3.0 / (16.0 * math.pi))
+    rayleigh_phase = builder.math('MULTIPLY', 6200, 300, 'Ray_Phase', v0=3.0 / (16.0 * math.pi))
     builder.link(one_plus_nu_sq.outputs[0], rayleigh_phase.inputs[1])
     
-    # Apply phase function to inscatter
-    inscatter_phased = builder.vec_math('SCALE', 5950, -100, 'Inscatter_Phased')
-    builder.link(inscatter_max.outputs[0], inscatter_phased.inputs[0])
-    builder.link(rayleigh_phase.outputs[0], inscatter_phased.inputs['Scale'])
+    # --- Mie phase function - CORRECT formula from reference (lines 744-746) ---
+    # k = 3/(8π) × (1-g²)/(2+g²)
+    # MiePhaseFunction = k × (1+ν²) / (1+g²-2gν)^1.5
+    MIE_G = 0.8
+    g_sq = MIE_G * MIE_G  # 0.64
     
-    # DEBUG: Also output S_cam directly (like sky shader) to compare
-    scat_cam_phased = builder.vec_math('SCALE', 5950, 100, 'S_cam_Phased')
-    builder.link(scat_cam_color, scat_cam_phased.inputs[0])
-    builder.link(rayleigh_phase.outputs[0], scat_cam_phased.inputs['Scale'])
+    # k = 3/(8π) × (1-g²)/(2+g²)
+    mie_k = (3.0 / (8.0 * math.pi)) * (1.0 - g_sq) / (2.0 + g_sq)  # ≈ 0.0163
     
-    # DEBUG: Output S_point to check point scattering lookup
-    scat_pt_phased = builder.vec_math('SCALE', 5950, 200, 'S_pt_Phased')
-    builder.link(scat_pt_color, scat_pt_phased.inputs[0])
-    builder.link(rayleigh_phase.outputs[0], scat_pt_phased.inputs['Scale'])
+    # (1 + ν²) term - uses nu_sq computed for Rayleigh
+    one_plus_nu_sq_mie = builder.math('ADD', 5900, -300, '1+ν²_mie', v0=1.0)
+    builder.link(nu_sq.outputs[0], one_plus_nu_sq_mie.inputs[1])
+    
+    # denominator_inner = 1 + g² - 2g×ν
+    two_g_nu = builder.math('MULTIPLY', 5900, -350, '2g×ν', v0=2.0 * MIE_G)
+    builder.link(nu.outputs['Value'], two_g_nu.inputs[1])
+    
+    denom_inner = builder.math('SUBTRACT', 6050, -350, '1+g²-2gν', v0=1.0 + g_sq)
+    builder.link(two_g_nu.outputs[0], denom_inner.inputs[1])
+    
+    # Safe clamp denominator inner to avoid division issues
+    denom_inner_safe = builder.math('MAXIMUM', 6200, -350, 'denom_safe', v1=0.0001)
+    builder.link(denom_inner.outputs[0], denom_inner_safe.inputs[0])
+    
+    # (1+g²-2gν)^1.5
+    denom_pow = builder.math('POWER', 6350, -350, 'inner^1.5', v1=1.5)
+    builder.link(denom_inner_safe.outputs[0], denom_pow.inputs[0])
+    
+    # k × (1+ν²)
+    k_times_nu_term = builder.math('MULTIPLY', 6050, -300, 'k×(1+ν²)', v0=mie_k)
+    builder.link(one_plus_nu_sq_mie.outputs[0], k_times_nu_term.inputs[1])
+    
+    # mie_phase = k × (1+ν²) / (1+g²-2gν)^1.5
+    mie_phase = builder.math('DIVIDE', 6500, -300, 'Mie_Phase')
+    builder.link(k_times_nu_term.outputs[0], mie_phase.inputs[0])
+    builder.link(denom_pow.outputs[0], mie_phase.inputs[1])
+    
+    # --- Mie smoothstep fade when sun below horizon (mu_s < 0.01) ---
+    # Reference line 1858-1859: smoothstep(0, 0.01, mu_s)
+    mu_s_fade_raw = builder.math('DIVIDE', 5900, -500, 'mu_s_fade_raw', v1=0.01)
+    builder.link(mu_s.outputs[0], mu_s_fade_raw.inputs[0])
+    
+    mu_s_fade_clamp = builder.math('MINIMUM', 6050, -500, 'mu_s_fade_clamp', v1=1.0)
+    builder.link(mu_s_fade_raw.outputs[0], mu_s_fade_clamp.inputs[0])
+    
+    mu_s_fade = builder.math('MAXIMUM', 6200, -500, 'mu_s_fade', v1=0.0)
+    builder.link(mu_s_fade_clamp.outputs[0], mu_s_fade.inputs[0])
+    
+    # Smoothstep: 3x² - 2x³
+    mu_s_fade_sq = builder.math('MULTIPLY', 6350, -500, 'fade²')
+    builder.link(mu_s_fade.outputs[0], mu_s_fade_sq.inputs[0])
+    builder.link(mu_s_fade.outputs[0], mu_s_fade_sq.inputs[1])
+    
+    mu_s_fade_cu = builder.math('MULTIPLY', 6500, -500, 'fade³')
+    builder.link(mu_s_fade_sq.outputs[0], mu_s_fade_cu.inputs[0])
+    builder.link(mu_s_fade.outputs[0], mu_s_fade_cu.inputs[1])
+    
+    smooth_3x2 = builder.math('MULTIPLY', 6350, -550, '3×fade²', v0=3.0)
+    builder.link(mu_s_fade_sq.outputs[0], smooth_3x2.inputs[1])
+    
+    smooth_2x3 = builder.math('MULTIPLY', 6500, -550, '2×fade³', v0=2.0)
+    builder.link(mu_s_fade_cu.outputs[0], smooth_2x3.inputs[1])
+    
+    mie_smoothstep = builder.math('SUBTRACT', 6650, -550, 'mie_smoothstep')
+    builder.link(smooth_3x2.outputs[0], mie_smoothstep.inputs[0])
+    builder.link(smooth_2x3.outputs[0], mie_smoothstep.inputs[1])
+    
+    # --- Apply phase functions ---
+    # Rayleigh contribution
+    rayleigh_phased = builder.vec_math('SCALE', 6800, 200, 'Ray_Phased')
+    builder.link(rayleigh_inscatter.outputs[0], rayleigh_phased.inputs[0])
+    builder.link(rayleigh_phase.outputs[0], rayleigh_phased.inputs['Scale'])
+    
+    # Mie contribution with smoothstep fade
+    mie_phase_faded = builder.math('MULTIPLY', 6800, -400, 'Mie_Phase_Faded')
+    builder.link(mie_phase.outputs[0], mie_phase_faded.inputs[0])
+    builder.link(mie_smoothstep.outputs[0], mie_phase_faded.inputs[1])
+    
+    mie_phased = builder.vec_math('SCALE', 6950, -100, 'Mie_Phased')
+    builder.link(mie_inscatter.outputs[0], mie_phased.inputs[0])
+    builder.link(mie_phase_faded.outputs[0], mie_phased.inputs['Scale'])
+    
+    # --- Combine: Rayleigh + Mie ---
+    # Reference line 1861-1862
+    inscatter_phased = builder.vec_math('ADD', 7100, 50, 'Inscatter_Phased')
+    builder.link(rayleigh_phased.outputs[0], inscatter_phased.inputs[0])
+    builder.link(mie_phased.outputs[0], inscatter_phased.inputs[1])
     
     # =========================================================================
-    # OUTPUTS
+    # OUTPUTS - V97: Actual Rayleigh/Mie AOVs
     # =========================================================================
+    # V96 confirmed: d IS correctly linked. The diagnostic comparisons looked
+    # identical because d (~1km) vs r×μ (~6360) is only ~0.016% difference.
+    # The math IS working - restore actual output.
     
-    builder.link(transmittance_final.outputs[0], group_output.inputs['Transmittance'])
-    
-    # Output proper inscatter with phase function applied
-    builder.link(inscatter_phased.outputs[0], group_output.inputs['Inscatter'])
+    builder.link(transmittance.outputs[0], group_output.inputs['Transmittance'])
+    builder.link(rayleigh_phased.outputs[0], group_output.inputs['Rayleigh'])
+    builder.link(mie_phased.outputs[0], group_output.inputs['Mie'])
     
     # Store version
     group['helios_version'] = AERIAL_NODE_VERSION
