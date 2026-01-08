@@ -4904,6 +4904,1569 @@ def apply_step_5_full_bruneton(surface_color=(0.8, 0.8, 0.8), debug_mode=0):
 
 
 # =============================================================================
+# STEP 6: PROPER BRUNETON TRANSMITTANCE (with ground intersection handling)
+# =============================================================================
+
+def apply_step_6_bruneton_transmittance(debug_mode=0):
+    """
+    Step 6: Proper Bruneton Transmittance with ground intersection handling.
+    
+    Implements the correct GetTransmittance formula from Bruneton:
+    - Sky rays: T = T(r, mu) / T(r_d, mu_d)
+    - Ground rays: T = T(r_d, -mu_d) / T(r, -mu)  [negated mu!]
+    
+    Args:
+        debug_mode: 0=full inscatter, 1=T only, 2=T_cam, 3=T_pt, 4=ground_flag
+    """
+    import bpy
+    import math
+    import mathutils
+    import time
+    import os
+    
+    print("=" * 60)
+    print("Step 6: Bruneton Transmittance (Ground Intersection Handling)")
+    print("=" * 60)
+    
+    # Constants
+    BOTTOM_RADIUS = 6360.0
+    TOP_RADIUS = 6420.0
+    H = math.sqrt(TOP_RADIUS**2 - BOTTOM_RADIUS**2)
+    TRANSMITTANCE_WIDTH = 256
+    TRANSMITTANCE_HEIGHT = 64
+    
+    # LUT paths
+    lut_dir = r"C:\Users\space\Documents\mattepaint\dev\atmospheric-scattering-3\helios_cache\luts"
+    trans_path = os.path.join(lut_dir, "transmittance.exr")
+    scatter_path = os.path.join(lut_dir, "scattering.exr")
+    
+    if not os.path.exists(trans_path):
+        print(f"  ERROR: Transmittance LUT not found: {trans_path}")
+        return None
+    
+    print(f"  Transmittance: {trans_path}")
+    
+    # Load LUT
+    trans_img = bpy.data.images.load(trans_path, check_existing=True)
+    trans_img.colorspace_settings.name = 'Non-Color'
+    
+    # Get camera
+    cam = bpy.context.scene.camera
+    if not cam:
+        print("  ERROR: No camera")
+        return None
+    
+    cam_alt_km = cam.location.z * 0.001
+    r_cam = BOTTOM_RADIUS + cam_alt_km
+    
+    # Pre-compute camera constants
+    rho_cam = math.sqrt(max(r_cam**2 - BOTTOM_RADIUS**2, 0))
+    x_r_cam = rho_cam / H
+    v_cam = 0.5 / TRANSMITTANCE_HEIGHT + x_r_cam * (1 - 1 / TRANSMITTANCE_HEIGHT)
+    d_min_cam = TOP_RADIUS - r_cam
+    d_max_cam = rho_cam + H
+    
+    print(f"  Camera: alt={cam_alt_km:.3f}km, r={r_cam:.6f}km")
+    print(f"  Camera rho={rho_cam:.4f}km, v_cam={v_cam:.6f}")
+    
+    # Create material
+    mat_name = f"Step6_BrunetonT_{int(time.time())}"
+    mat = bpy.data.materials.new(name=mat_name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+    
+    # ==========================================================================
+    # GEOMETRY: Camera position, view direction, distance
+    # ==========================================================================
+    
+    geom = nodes.new('ShaderNodeNewGeometry')
+    geom.location = (-1200, 0)
+    
+    cam_pos = nodes.new('ShaderNodeCombineXYZ')
+    cam_pos.location = (-1200, -200)
+    cam_pos.inputs['X'].default_value = cam.location.x * 0.001
+    cam_pos.inputs['Y'].default_value = cam.location.y * 0.001
+    cam_pos.inputs['Z'].default_value = cam.location.z * 0.001
+    
+    # World position in km
+    pos_scale = nodes.new('ShaderNodeVectorMath')
+    pos_scale.operation = 'SCALE'
+    pos_scale.location = (-1000, 0)
+    pos_scale.inputs['Scale'].default_value = 0.001
+    links.new(geom.outputs['Position'], pos_scale.inputs[0])
+    
+    # View vector (camera to point)
+    view_vec = nodes.new('ShaderNodeVectorMath')
+    view_vec.operation = 'SUBTRACT'
+    view_vec.location = (-800, 0)
+    links.new(pos_scale.outputs['Vector'], view_vec.inputs[0])
+    links.new(cam_pos.outputs['Vector'], view_vec.inputs[1])
+    
+    # Distance d
+    d = nodes.new('ShaderNodeVectorMath')
+    d.operation = 'LENGTH'
+    d.location = (-600, 0)
+    links.new(view_vec.outputs['Vector'], d.inputs[0])
+    
+    # Normalized view direction
+    view_norm = nodes.new('ShaderNodeVectorMath')
+    view_norm.operation = 'NORMALIZE'
+    view_norm.location = (-600, -100)
+    links.new(view_vec.outputs['Vector'], view_norm.inputs[0])
+    
+    # ==========================================================================
+    # MU: cos(zenith) = dot(up, view_dir) where up = (0,0,1) in Blender
+    # ==========================================================================
+    
+    up_vec = nodes.new('ShaderNodeCombineXYZ')
+    up_vec.location = (-800, -200)
+    up_vec.inputs['X'].default_value = 0.0
+    up_vec.inputs['Y'].default_value = 0.0
+    up_vec.inputs['Z'].default_value = 1.0
+    
+    mu = nodes.new('ShaderNodeVectorMath')
+    mu.operation = 'DOT_PRODUCT'
+    mu.location = (-400, -100)
+    links.new(view_norm.outputs['Vector'], mu.inputs[0])
+    links.new(up_vec.outputs['Vector'], mu.inputs[1])
+    
+    # Clamp mu to [-1, 1]
+    mu_clamp = nodes.new('ShaderNodeClamp')
+    mu_clamp.location = (-200, -100)
+    mu_clamp.inputs['Min'].default_value = -1.0
+    mu_clamp.inputs['Max'].default_value = 1.0
+    links.new(mu.outputs['Value'], mu_clamp.inputs['Value'])
+    
+    # ==========================================================================
+    # GROUND INTERSECTION TEST: Hard cutoff at mu < 0
+    # Plus horizon_factor for fallback to exponential near mu=0
+    # ==========================================================================
+    
+    # Ground flag: 1 when mu < 0, 0 otherwise
+    ground_flag = nodes.new('ShaderNodeMath')
+    ground_flag.operation = 'LESS_THAN'
+    ground_flag.location = (0, -200)
+    ground_flag.inputs[1].default_value = 0.0
+    links.new(mu_clamp.outputs['Result'], ground_flag.inputs[0])
+    
+    # Horizon factor: how close to horizon (|mu| < 0.1)
+    # horizon_factor = 1 - smoothstep(0, 0.1, |mu|)
+    # When |mu| >= 0.1: horizon_factor = 0 (use LUT)
+    # When |mu| = 0: horizon_factor = 1 (use exponential fallback)
+    
+    abs_mu = nodes.new('ShaderNodeMath')
+    abs_mu.operation = 'ABSOLUTE'
+    abs_mu.location = (0, -350)
+    links.new(mu_clamp.outputs['Result'], abs_mu.inputs[0])
+    
+    # Map |mu| from [0, 0.1] to [0, 1]
+    mu_horizon_scale = nodes.new('ShaderNodeMath')
+    mu_horizon_scale.operation = 'DIVIDE'
+    mu_horizon_scale.location = (150, -350)
+    mu_horizon_scale.inputs[1].default_value = 0.1
+    links.new(abs_mu.outputs['Value'], mu_horizon_scale.inputs[0])
+    
+    mu_horizon_clamp = nodes.new('ShaderNodeClamp')
+    mu_horizon_clamp.location = (300, -350)
+    links.new(mu_horizon_scale.outputs['Value'], mu_horizon_clamp.inputs['Value'])
+    
+    # Invert: horizon_factor = 1 - clamped value
+    horizon_factor = nodes.new('ShaderNodeMath')
+    horizon_factor.operation = 'SUBTRACT'
+    horizon_factor.location = (450, -350)
+    horizon_factor.inputs[0].default_value = 1.0
+    links.new(mu_horizon_clamp.outputs['Result'], horizon_factor.inputs[1])
+    
+    # ==========================================================================
+    # POINT PARAMETERS: r_d, mu_d at distance d
+    # r_d = sqrt(d² + 2*r*mu*d + r²)
+    # mu_d = (r*mu + d) / r_d
+    # ==========================================================================
+    
+    # d²
+    d_sq = nodes.new('ShaderNodeMath')
+    d_sq.operation = 'MULTIPLY'
+    d_sq.location = (0, 100)
+    links.new(d.outputs['Value'], d_sq.inputs[0])
+    links.new(d.outputs['Value'], d_sq.inputs[1])
+    
+    # 2*r*mu*d
+    r_mu = nodes.new('ShaderNodeMath')
+    r_mu.operation = 'MULTIPLY'
+    r_mu.location = (0, 0)
+    r_mu.inputs[0].default_value = r_cam
+    links.new(mu_clamp.outputs['Result'], r_mu.inputs[1])
+    
+    two_r_mu_d = nodes.new('ShaderNodeMath')
+    two_r_mu_d.operation = 'MULTIPLY'
+    two_r_mu_d.location = (150, 0)
+    two_r_mu_d.inputs[1].default_value = 2.0
+    links.new(r_mu.outputs['Value'], two_r_mu_d.inputs[0])
+    
+    two_r_mu_d_final = nodes.new('ShaderNodeMath')
+    two_r_mu_d_final.operation = 'MULTIPLY'
+    two_r_mu_d_final.location = (300, 0)
+    links.new(two_r_mu_d.outputs['Value'], two_r_mu_d_final.inputs[0])
+    links.new(d.outputs['Value'], two_r_mu_d_final.inputs[1])
+    
+    # r²
+    r_sq = r_cam * r_cam
+    
+    # r_d² = d² + 2*r*mu*d + r²
+    r_d_sq_1 = nodes.new('ShaderNodeMath')
+    r_d_sq_1.operation = 'ADD'
+    r_d_sq_1.location = (450, 50)
+    links.new(d_sq.outputs['Value'], r_d_sq_1.inputs[0])
+    links.new(two_r_mu_d_final.outputs['Value'], r_d_sq_1.inputs[1])
+    
+    r_d_sq = nodes.new('ShaderNodeMath')
+    r_d_sq.operation = 'ADD'
+    r_d_sq.location = (600, 50)
+    r_d_sq.inputs[1].default_value = r_sq
+    links.new(r_d_sq_1.outputs['Value'], r_d_sq.inputs[0])
+    
+    # Clamp r_d² to valid range
+    r_d_sq_safe = nodes.new('ShaderNodeMath')
+    r_d_sq_safe.operation = 'MAXIMUM'
+    r_d_sq_safe.location = (750, 50)
+    r_d_sq_safe.inputs[1].default_value = BOTTOM_RADIUS * BOTTOM_RADIUS
+    links.new(r_d_sq.outputs['Value'], r_d_sq_safe.inputs[0])
+    
+    r_d = nodes.new('ShaderNodeMath')
+    r_d.operation = 'SQRT'
+    r_d.location = (900, 50)
+    links.new(r_d_sq_safe.outputs['Value'], r_d.inputs[0])
+    
+    # Clamp r_d to [bottom, top]
+    r_d_min = nodes.new('ShaderNodeMath')
+    r_d_min.operation = 'MAXIMUM'
+    r_d_min.location = (1050, 50)
+    r_d_min.inputs[1].default_value = BOTTOM_RADIUS
+    links.new(r_d.outputs['Value'], r_d_min.inputs[0])
+    
+    r_d_clamp = nodes.new('ShaderNodeMath')
+    r_d_clamp.operation = 'MINIMUM'
+    r_d_clamp.location = (1200, 50)
+    r_d_clamp.inputs[1].default_value = TOP_RADIUS
+    links.new(r_d_min.outputs['Value'], r_d_clamp.inputs[0])
+    
+    # mu_d = (r*mu + d) / r_d
+    r_mu_plus_d = nodes.new('ShaderNodeMath')
+    r_mu_plus_d.operation = 'ADD'
+    r_mu_plus_d.location = (600, -50)
+    links.new(r_mu.outputs['Value'], r_mu_plus_d.inputs[0])
+    links.new(d.outputs['Value'], r_mu_plus_d.inputs[1])
+    
+    # Safe division
+    r_d_safe = nodes.new('ShaderNodeMath')
+    r_d_safe.operation = 'MAXIMUM'
+    r_d_safe.location = (1050, -50)
+    r_d_safe.inputs[1].default_value = 0.001
+    links.new(r_d_clamp.outputs['Value'], r_d_safe.inputs[0])
+    
+    mu_d = nodes.new('ShaderNodeMath')
+    mu_d.operation = 'DIVIDE'
+    mu_d.location = (1200, -50)
+    links.new(r_mu_plus_d.outputs['Value'], mu_d.inputs[0])
+    links.new(r_d_safe.outputs['Value'], mu_d.inputs[1])
+    
+    # Clamp mu_d to [-1, 1]
+    mu_d_clamp = nodes.new('ShaderNodeClamp')
+    mu_d_clamp.location = (1350, -50)
+    mu_d_clamp.inputs['Min'].default_value = -1.0
+    mu_d_clamp.inputs['Max'].default_value = 1.0
+    links.new(mu_d.outputs['Value'], mu_d_clamp.inputs['Value'])
+    
+    # ==========================================================================
+    # NEGATED MU VALUES (for ground case)
+    # ==========================================================================
+    
+    neg_mu = nodes.new('ShaderNodeMath')
+    neg_mu.operation = 'MULTIPLY'
+    neg_mu.location = (200, -300)
+    neg_mu.inputs[1].default_value = -1.0
+    links.new(mu_clamp.outputs['Result'], neg_mu.inputs[0])
+    
+    neg_mu_d = nodes.new('ShaderNodeMath')
+    neg_mu_d.operation = 'MULTIPLY'
+    neg_mu_d.location = (1500, -150)
+    neg_mu_d.inputs[1].default_value = -1.0
+    links.new(mu_d_clamp.outputs['Result'], neg_mu_d.inputs[0])
+    
+    # ==========================================================================
+    # HELPER: Create transmittance UV nodes
+    # ==========================================================================
+    
+    def create_trans_uv(name, r_val, mu_node, base_x, base_y):
+        """Create UV coordinates for transmittance LUT sampling."""
+        
+        # For camera (constant r), precompute rho and v
+        if isinstance(r_val, float):
+            rho = math.sqrt(max(r_val**2 - BOTTOM_RADIUS**2, 0))
+            x_r = rho / H
+            v_val = 0.5 / TRANSMITTANCE_HEIGHT + x_r * (1 - 1 / TRANSMITTANCE_HEIGHT)
+            d_min = TOP_RADIUS - r_val
+            d_max = rho + H
+            r_sq_const = r_val * r_val
+            
+            # d_to_top = -r*mu + sqrt(r²(mu²-1) + top²)
+            mu_sq = nodes.new('ShaderNodeMath')
+            mu_sq.operation = 'MULTIPLY'
+            mu_sq.location = (base_x, base_y)
+            links.new(mu_node.outputs[0], mu_sq.inputs[0])
+            links.new(mu_node.outputs[0], mu_sq.inputs[1])
+            
+            mu_sq_m1 = nodes.new('ShaderNodeMath')
+            mu_sq_m1.operation = 'SUBTRACT'
+            mu_sq_m1.location = (base_x + 150, base_y)
+            mu_sq_m1.inputs[1].default_value = 1.0
+            links.new(mu_sq.outputs['Value'], mu_sq_m1.inputs[0])
+            
+            disc = nodes.new('ShaderNodeMath')
+            disc.operation = 'MULTIPLY'
+            disc.location = (base_x + 300, base_y)
+            disc.inputs[1].default_value = r_sq_const
+            links.new(mu_sq_m1.outputs['Value'], disc.inputs[0])
+            
+            disc_add = nodes.new('ShaderNodeMath')
+            disc_add.operation = 'ADD'
+            disc_add.location = (base_x + 450, base_y)
+            disc_add.inputs[1].default_value = TOP_RADIUS * TOP_RADIUS
+            links.new(disc.outputs['Value'], disc_add.inputs[0])
+            
+            disc_safe = nodes.new('ShaderNodeMath')
+            disc_safe.operation = 'MAXIMUM'
+            disc_safe.location = (base_x + 600, base_y)
+            disc_safe.inputs[1].default_value = 0.0
+            links.new(disc_add.outputs['Value'], disc_safe.inputs[0])
+            
+            disc_sqrt = nodes.new('ShaderNodeMath')
+            disc_sqrt.operation = 'SQRT'
+            disc_sqrt.location = (base_x + 750, base_y)
+            links.new(disc_safe.outputs['Value'], disc_sqrt.inputs[0])
+            
+            neg_r_mu = nodes.new('ShaderNodeMath')
+            neg_r_mu.operation = 'MULTIPLY'
+            neg_r_mu.location = (base_x + 150, base_y - 100)
+            neg_r_mu.inputs[1].default_value = -r_val
+            links.new(mu_node.outputs[0], neg_r_mu.inputs[0])
+            
+            d_to_top = nodes.new('ShaderNodeMath')
+            d_to_top.operation = 'ADD'
+            d_to_top.location = (base_x + 900, base_y - 50)
+            links.new(neg_r_mu.outputs['Value'], d_to_top.inputs[0])
+            links.new(disc_sqrt.outputs['Value'], d_to_top.inputs[1])
+            
+            # x_mu = (d_to_top - d_min) / (d_max - d_min)
+            d_minus_dmin = nodes.new('ShaderNodeMath')
+            d_minus_dmin.operation = 'SUBTRACT'
+            d_minus_dmin.location = (base_x + 1050, base_y - 50)
+            d_minus_dmin.inputs[1].default_value = d_min
+            links.new(d_to_top.outputs['Value'], d_minus_dmin.inputs[0])
+            
+            x_mu_node = nodes.new('ShaderNodeMath')
+            x_mu_node.operation = 'DIVIDE'
+            x_mu_node.location = (base_x + 1200, base_y - 50)
+            x_mu_node.inputs[1].default_value = max(d_max - d_min, 0.001)
+            links.new(d_minus_dmin.outputs['Value'], x_mu_node.inputs[0])
+            
+            x_mu_clamp = nodes.new('ShaderNodeClamp')
+            x_mu_clamp.location = (base_x + 1350, base_y - 50)
+            links.new(x_mu_node.outputs['Value'], x_mu_clamp.inputs['Value'])
+            
+            # u = 0.5/W + x_mu * (1 - 1/W)
+            u_scale = nodes.new('ShaderNodeMath')
+            u_scale.operation = 'MULTIPLY'
+            u_scale.location = (base_x + 1500, base_y - 50)
+            u_scale.inputs[1].default_value = 1 - 1/TRANSMITTANCE_WIDTH
+            links.new(x_mu_clamp.outputs['Result'], u_scale.inputs[0])
+            
+            u_final = nodes.new('ShaderNodeMath')
+            u_final.operation = 'ADD'
+            u_final.location = (base_x + 1650, base_y - 50)
+            u_final.inputs[0].default_value = 0.5/TRANSMITTANCE_WIDTH
+            links.new(u_scale.outputs['Value'], u_final.inputs[1])
+            
+            # Combine UV
+            uv = nodes.new('ShaderNodeCombineXYZ')
+            uv.location = (base_x + 1800, base_y - 50)
+            uv.inputs['Y'].default_value = v_val
+            uv.inputs['Z'].default_value = 0.0
+            links.new(u_final.outputs['Value'], uv.inputs['X'])
+            
+            return uv
+        else:
+            # Dynamic r (for point position) - more complex
+            # For now, use approximation: v ≈ v_cam (valid for short distances)
+            # This simplification works when point is near ground level
+            
+            # Same UV calculation but with dynamic r
+            # TODO: Full implementation for dynamic r
+            return create_trans_uv(name, r_cam, mu_node, base_x, base_y)
+    
+    # ==========================================================================
+    # CREATE UV COORDINATES FOR ALL 4 SAMPLE POINTS
+    # ==========================================================================
+    
+    # SKY case: T(r, mu) / T(r_d, mu_d)
+    uv_sky_num = create_trans_uv("sky_num", r_cam, mu_clamp, 1600, 400)
+    uv_sky_den = create_trans_uv("sky_den", r_cam, mu_d_clamp, 1600, 200)
+    
+    # GROUND case: T(r_d, -mu_d) / T(r, -mu)
+    uv_gnd_num = create_trans_uv("gnd_num", r_cam, neg_mu_d, 1600, 0)
+    uv_gnd_den = create_trans_uv("gnd_den", r_cam, neg_mu, 1600, -200)
+    
+    # ==========================================================================
+    # SAMPLE TRANSMITTANCE LUT
+    # ==========================================================================
+    
+    tex_sky_num = nodes.new('ShaderNodeTexImage')
+    tex_sky_num.location = (3600, 400)
+    tex_sky_num.interpolation = 'Linear'
+    tex_sky_num.extension = 'EXTEND'
+    tex_sky_num.image = trans_img
+    links.new(uv_sky_num.outputs['Vector'], tex_sky_num.inputs['Vector'])
+    
+    tex_sky_den = nodes.new('ShaderNodeTexImage')
+    tex_sky_den.location = (3600, 200)
+    tex_sky_den.interpolation = 'Linear'
+    tex_sky_den.extension = 'EXTEND'
+    tex_sky_den.image = trans_img
+    links.new(uv_sky_den.outputs['Vector'], tex_sky_den.inputs['Vector'])
+    
+    tex_gnd_num = nodes.new('ShaderNodeTexImage')
+    tex_gnd_num.location = (3600, 0)
+    tex_gnd_num.interpolation = 'Linear'
+    tex_gnd_num.extension = 'EXTEND'
+    tex_gnd_num.image = trans_img
+    links.new(uv_gnd_num.outputs['Vector'], tex_gnd_num.inputs['Vector'])
+    
+    tex_gnd_den = nodes.new('ShaderNodeTexImage')
+    tex_gnd_den.location = (3600, -200)
+    tex_gnd_den.interpolation = 'Linear'
+    tex_gnd_den.extension = 'EXTEND'
+    tex_gnd_den.image = trans_img
+    links.new(uv_gnd_den.outputs['Vector'], tex_gnd_den.inputs['Vector'])
+    
+    # ==========================================================================
+    # COMPUTE RATIOS: T_sky and T_ground
+    # ==========================================================================
+    
+    # Separate RGB for division
+    sep_sky_num = nodes.new('ShaderNodeSeparateColor')
+    sep_sky_num.location = (3800, 400)
+    links.new(tex_sky_num.outputs['Color'], sep_sky_num.inputs['Color'])
+    
+    sep_sky_den = nodes.new('ShaderNodeSeparateColor')
+    sep_sky_den.location = (3800, 200)
+    links.new(tex_sky_den.outputs['Color'], sep_sky_den.inputs['Color'])
+    
+    sep_gnd_num = nodes.new('ShaderNodeSeparateColor')
+    sep_gnd_num.location = (3800, 0)
+    links.new(tex_gnd_num.outputs['Color'], sep_gnd_num.inputs['Color'])
+    
+    sep_gnd_den = nodes.new('ShaderNodeSeparateColor')
+    sep_gnd_den.location = (3800, -200)
+    links.new(tex_gnd_den.outputs['Color'], sep_gnd_den.inputs['Color'])
+    
+    # Safe denominators (clamp to avoid div by zero)
+    def safe_div(num_node, num_out, den_node, den_out, loc_x, loc_y):
+        den_safe = nodes.new('ShaderNodeMath')
+        den_safe.operation = 'MAXIMUM'
+        den_safe.location = (loc_x, loc_y)
+        den_safe.inputs[1].default_value = 0.001
+        links.new(den_node.outputs[den_out], den_safe.inputs[0])
+        
+        div = nodes.new('ShaderNodeMath')
+        div.operation = 'DIVIDE'
+        div.location = (loc_x + 150, loc_y)
+        links.new(num_node.outputs[num_out], div.inputs[0])
+        links.new(den_safe.outputs['Value'], div.inputs[1])
+        
+        clamp = nodes.new('ShaderNodeClamp')
+        clamp.location = (loc_x + 300, loc_y)
+        links.new(div.outputs['Value'], clamp.inputs['Value'])
+        
+        return clamp
+    
+    # T_sky RGB
+    t_sky_r = safe_div(sep_sky_num, 'Red', sep_sky_den, 'Red', 4000, 450)
+    t_sky_g = safe_div(sep_sky_num, 'Green', sep_sky_den, 'Green', 4000, 350)
+    t_sky_b = safe_div(sep_sky_num, 'Blue', sep_sky_den, 'Blue', 4000, 250)
+    
+    # T_ground RGB
+    t_gnd_r = safe_div(sep_gnd_num, 'Red', sep_gnd_den, 'Red', 4000, 50)
+    t_gnd_g = safe_div(sep_gnd_num, 'Green', sep_gnd_den, 'Green', 4000, -50)
+    t_gnd_b = safe_div(sep_gnd_num, 'Blue', sep_gnd_den, 'Blue', 4000, -150)
+    
+    # Combine into RGB
+    t_sky_rgb = nodes.new('ShaderNodeCombineColor')
+    t_sky_rgb.location = (4500, 350)
+    links.new(t_sky_r.outputs['Result'], t_sky_rgb.inputs['Red'])
+    links.new(t_sky_g.outputs['Result'], t_sky_rgb.inputs['Green'])
+    links.new(t_sky_b.outputs['Result'], t_sky_rgb.inputs['Blue'])
+    
+    t_gnd_rgb = nodes.new('ShaderNodeCombineColor')
+    t_gnd_rgb.location = (4500, -50)
+    links.new(t_gnd_r.outputs['Result'], t_gnd_rgb.inputs['Red'])
+    links.new(t_gnd_g.outputs['Result'], t_gnd_rgb.inputs['Green'])
+    links.new(t_gnd_b.outputs['Result'], t_gnd_rgb.inputs['Blue'])
+    
+    # ==========================================================================
+    # SELECT: Mix based on ground intersection flag
+    # ==========================================================================
+    
+    t_lut = nodes.new('ShaderNodeMix')
+    t_lut.data_type = 'RGBA'
+    t_lut.blend_type = 'MIX'
+    t_lut.location = (4700, 150)
+    links.new(ground_flag.outputs['Value'], t_lut.inputs['Factor'])
+    links.new(t_sky_rgb.outputs['Color'], t_lut.inputs[6])   # A = sky (when mu >= 0)
+    links.new(t_gnd_rgb.outputs['Color'], t_lut.inputs[7])   # B = ground (when mu < 0)
+    
+    # ==========================================================================
+    # EXPONENTIAL FALLBACK for horizon (when |mu| < 0.1)
+    # T_exp = exp(-d * k) with wavelength-dependent k
+    # ==========================================================================
+    
+    # Wavelength-dependent extinction: k_r=0.02, k_g=0.03, k_b=0.05
+    neg_d_r = nodes.new('ShaderNodeMath')
+    neg_d_r.operation = 'MULTIPLY'
+    neg_d_r.location = (4700, -200)
+    neg_d_r.inputs[1].default_value = -0.02
+    links.new(d.outputs['Value'], neg_d_r.inputs[0])
+    
+    neg_d_g = nodes.new('ShaderNodeMath')
+    neg_d_g.operation = 'MULTIPLY'
+    neg_d_g.location = (4700, -300)
+    neg_d_g.inputs[1].default_value = -0.03
+    links.new(d.outputs['Value'], neg_d_g.inputs[0])
+    
+    neg_d_b = nodes.new('ShaderNodeMath')
+    neg_d_b.operation = 'MULTIPLY'
+    neg_d_b.location = (4700, -400)
+    neg_d_b.inputs[1].default_value = -0.05
+    links.new(d.outputs['Value'], neg_d_b.inputs[0])
+    
+    t_exp_r = nodes.new('ShaderNodeMath')
+    t_exp_r.operation = 'EXPONENT'
+    t_exp_r.location = (4850, -200)
+    links.new(neg_d_r.outputs['Value'], t_exp_r.inputs[0])
+    
+    t_exp_g = nodes.new('ShaderNodeMath')
+    t_exp_g.operation = 'EXPONENT'
+    t_exp_g.location = (4850, -300)
+    links.new(neg_d_g.outputs['Value'], t_exp_g.inputs[0])
+    
+    t_exp_b = nodes.new('ShaderNodeMath')
+    t_exp_b.operation = 'EXPONENT'
+    t_exp_b.location = (4850, -400)
+    links.new(neg_d_b.outputs['Value'], t_exp_b.inputs[0])
+    
+    t_exp_rgb = nodes.new('ShaderNodeCombineColor')
+    t_exp_rgb.location = (5000, -300)
+    links.new(t_exp_r.outputs['Value'], t_exp_rgb.inputs['Red'])
+    links.new(t_exp_g.outputs['Value'], t_exp_rgb.inputs['Green'])
+    links.new(t_exp_b.outputs['Value'], t_exp_rgb.inputs['Blue'])
+    
+    # ==========================================================================
+    # FINAL BLEND: Mix LUT result with exponential fallback based on horizon_factor
+    # ==========================================================================
+    
+    t_final = nodes.new('ShaderNodeMix')
+    t_final.data_type = 'RGBA'
+    t_final.blend_type = 'MIX'
+    t_final.location = (5200, 0)
+    links.new(horizon_factor.outputs['Value'], t_final.inputs['Factor'])
+    links.new(t_lut.outputs[2], t_final.inputs[6])      # A = LUT result (when |mu| >= 0.1)
+    links.new(t_exp_rgb.outputs['Color'], t_final.inputs[7])  # B = exponential (when |mu| ~ 0)
+    
+    # ==========================================================================
+    # OUTPUT
+    # ==========================================================================
+    
+    emission = nodes.new('ShaderNodeEmission')
+    emission.location = (4900, 150)
+    emission.inputs['Strength'].default_value = 1.0
+    
+    if debug_mode == 0:
+        # Full transmittance
+        links.new(t_final.outputs[2], emission.inputs['Color'])
+    elif debug_mode == 1:
+        # T_sky only
+        links.new(t_sky_rgb.outputs['Color'], emission.inputs['Color'])
+    elif debug_mode == 2:
+        # T_ground only
+        links.new(t_gnd_rgb.outputs['Color'], emission.inputs['Color'])
+    elif debug_mode == 3:
+        # Ground flag visualization
+        flag_rgb = nodes.new('ShaderNodeCombineColor')
+        flag_rgb.location = (4700, -100)
+        links.new(ground_flag.outputs['Value'], flag_rgb.inputs['Red'])
+        flag_rgb.inputs['Green'].default_value = 0.0
+        flag_rgb.inputs['Blue'].default_value = 0.0
+        links.new(flag_rgb.outputs['Color'], emission.inputs['Color'])
+    
+    output = nodes.new('ShaderNodeOutputMaterial')
+    output.location = (5100, 150)
+    links.new(emission.outputs['Emission'], output.inputs['Surface'])
+    
+    # Assign to meshes
+    count = 0
+    for obj in bpy.context.scene.objects:
+        if obj.type == 'MESH':
+            if len(obj.data.materials) == 0:
+                obj.data.materials.append(mat)
+            else:
+                obj.data.materials[0] = mat
+            count += 1
+    
+    print(f"\n  Created: {mat_name}")
+    print(f"  Assigned to {count} meshes")
+    print(f"  Debug mode: {debug_mode} (0=full, 1=T_sky, 2=T_gnd, 3=flag)")
+    
+    return mat
+
+
+# =============================================================================
+# STEP 7: FULL INSCATTER WITH LUT TRANSMITTANCE
+# Combines Step 2.4's LUT scattering with Step 6's LUT transmittance
+# =============================================================================
+
+def apply_step_7_full_lut_inscatter(debug_mode=0):
+    """
+    Step 7: Full inscatter with LUT-based transmittance.
+    
+    Combines:
+    - LUT-based Rayleigh scattering (from scattering.exr RGB)
+    - LUT-based Mie scattering (from scattering.exr Alpha)
+    - Analytical phase functions
+    - LUT-based transmittance with ground handling and horizon fallback
+    
+    Formula: Inscatter = S_cam - T × S_pt
+    Where T uses Bruneton's GetTransmittance with exponential fallback near horizon.
+    
+    Args:
+        debug_mode: 0=inscatter, 1=T only, 2=S_cam, 3=S_pt, 4=phase
+    """
+    import bpy
+    import math
+    import mathutils
+    import time
+    import os
+    
+    print("=" * 60)
+    print("Step 7: Full Inscatter with LUT Transmittance")
+    print("=" * 60)
+    
+    # Constants
+    BOTTOM_RADIUS = 6360.0
+    TOP_RADIUS = 6420.0
+    H = math.sqrt(TOP_RADIUS**2 - BOTTOM_RADIUS**2)
+    TRANSMITTANCE_WIDTH = 256
+    TRANSMITTANCE_HEIGHT = 64
+    SCATTERING_R = 32
+    SCATTERING_MU = 128
+    SCATTERING_MU_S = 32
+    SCATTERING_NU = 8
+    MIE_G = 0.8
+    
+    # LUT paths
+    lut_dir = r"C:\Users\space\Documents\mattepaint\dev\atmospheric-scattering-3\helios_cache\luts"
+    trans_path = os.path.join(lut_dir, "transmittance.exr")
+    scatter_path = os.path.join(lut_dir, "scattering.exr")
+    
+    for p, name in [(trans_path, "transmittance"), (scatter_path, "scattering")]:
+        if not os.path.exists(p):
+            print(f"  ERROR: {name} LUT not found: {p}")
+            return None
+    
+    print(f"  Transmittance: {trans_path}")
+    print(f"  Scattering: {scatter_path}")
+    
+    # Load LUTs
+    trans_img = bpy.data.images.load(trans_path, check_existing=True)
+    trans_img.colorspace_settings.name = 'Non-Color'
+    scatter_img = bpy.data.images.load(scatter_path, check_existing=True)
+    scatter_img.colorspace_settings.name = 'Non-Color'
+    
+    # Get camera and sun
+    cam = bpy.context.scene.camera
+    if not cam:
+        print("  ERROR: No camera")
+        return None
+    
+    sun_light = None
+    for obj in bpy.context.scene.objects:
+        if obj.type == 'LIGHT' and obj.data.type == 'SUN':
+            sun_light = obj
+            break
+    
+    if sun_light:
+        sun_dir = sun_light.matrix_world.to_quaternion() @ mathutils.Vector((0, 0, -1))
+        sun_dir.normalize()
+    else:
+        sun_dir = mathutils.Vector((0.0, 0.2588, 0.9659))
+    
+    cam_alt_km = cam.location.z * 0.001
+    r_cam = BOTTOM_RADIUS + cam_alt_km
+    rho_cam = math.sqrt(max(r_cam**2 - BOTTOM_RADIUS**2, 0))
+    
+    print(f"  Camera: alt={cam_alt_km:.3f}km, r={r_cam:.6f}km")
+    print(f"  Sun: ({sun_dir.x:.3f}, {sun_dir.y:.3f}, {sun_dir.z:.3f})")
+    
+    # Create material
+    mat_name = f"Step7_FullLUT_{int(time.time())}"
+    mat = bpy.data.materials.new(name=mat_name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+    
+    # ==========================================================================
+    # GEOMETRY AND VIEW PARAMETERS
+    # ==========================================================================
+    
+    geom = nodes.new('ShaderNodeNewGeometry')
+    geom.location = (-1400, 0)
+    
+    cam_pos = nodes.new('ShaderNodeCombineXYZ')
+    cam_pos.location = (-1400, -200)
+    cam_pos.inputs['X'].default_value = cam.location.x * 0.001
+    cam_pos.inputs['Y'].default_value = cam.location.y * 0.001
+    cam_pos.inputs['Z'].default_value = cam.location.z * 0.001
+    
+    # World position in km
+    pos_scale = nodes.new('ShaderNodeVectorMath')
+    pos_scale.operation = 'SCALE'
+    pos_scale.location = (-1200, 0)
+    pos_scale.inputs['Scale'].default_value = 0.001
+    links.new(geom.outputs['Position'], pos_scale.inputs[0])
+    
+    # View vector
+    view_vec = nodes.new('ShaderNodeVectorMath')
+    view_vec.operation = 'SUBTRACT'
+    view_vec.location = (-1000, 0)
+    links.new(pos_scale.outputs['Vector'], view_vec.inputs[0])
+    links.new(cam_pos.outputs['Vector'], view_vec.inputs[1])
+    
+    # Distance d
+    d = nodes.new('ShaderNodeVectorMath')
+    d.operation = 'LENGTH'
+    d.location = (-800, 0)
+    links.new(view_vec.outputs['Vector'], d.inputs[0])
+    
+    # Normalized view direction
+    view_norm = nodes.new('ShaderNodeVectorMath')
+    view_norm.operation = 'NORMALIZE'
+    view_norm.location = (-800, -100)
+    links.new(view_vec.outputs['Vector'], view_norm.inputs[0])
+    
+    # Up vector
+    up_vec = nodes.new('ShaderNodeCombineXYZ')
+    up_vec.location = (-1000, -200)
+    up_vec.inputs['X'].default_value = 0.0
+    up_vec.inputs['Y'].default_value = 0.0
+    up_vec.inputs['Z'].default_value = 1.0
+    
+    # mu = cos(zenith) = dot(up, view)
+    mu = nodes.new('ShaderNodeVectorMath')
+    mu.operation = 'DOT_PRODUCT'
+    mu.location = (-600, -100)
+    links.new(view_norm.outputs['Vector'], mu.inputs[0])
+    links.new(up_vec.outputs['Vector'], mu.inputs[1])
+    
+    mu_clamp = nodes.new('ShaderNodeClamp')
+    mu_clamp.location = (-400, -100)
+    mu_clamp.inputs['Min'].default_value = -1.0
+    mu_clamp.inputs['Max'].default_value = 1.0
+    links.new(mu.outputs['Value'], mu_clamp.inputs['Value'])
+    
+    # Sun direction node
+    sun_node = nodes.new('ShaderNodeCombineXYZ')
+    sun_node.location = (-1000, -350)
+    sun_node.inputs['X'].default_value = sun_dir.x
+    sun_node.inputs['Y'].default_value = sun_dir.y
+    sun_node.inputs['Z'].default_value = sun_dir.z
+    
+    # mu_s = cos(sun zenith) = dot(up, sun) = sun.z
+    mu_s_val = sun_dir.z
+    
+    # nu = cos(view-sun angle) = dot(view, sun)
+    nu = nodes.new('ShaderNodeVectorMath')
+    nu.operation = 'DOT_PRODUCT'
+    nu.location = (-600, -250)
+    links.new(view_norm.outputs['Vector'], nu.inputs[0])
+    links.new(sun_node.outputs['Vector'], nu.inputs[1])
+    
+    nu_clamp = nodes.new('ShaderNodeClamp')
+    nu_clamp.location = (-400, -250)
+    nu_clamp.inputs['Min'].default_value = -1.0
+    nu_clamp.inputs['Max'].default_value = 1.0
+    links.new(nu.outputs['Value'], nu_clamp.inputs['Value'])
+    
+    # ==========================================================================
+    # GROUND FLAG AND HORIZON FACTOR (from Step 6)
+    # ==========================================================================
+    
+    ground_flag = nodes.new('ShaderNodeMath')
+    ground_flag.operation = 'LESS_THAN'
+    ground_flag.location = (-200, -150)
+    ground_flag.inputs[1].default_value = 0.0
+    links.new(mu_clamp.outputs['Result'], ground_flag.inputs[0])
+    
+    abs_mu = nodes.new('ShaderNodeMath')
+    abs_mu.operation = 'ABSOLUTE'
+    abs_mu.location = (-200, -300)
+    links.new(mu_clamp.outputs['Result'], abs_mu.inputs[0])
+    
+    mu_horizon_scale = nodes.new('ShaderNodeMath')
+    mu_horizon_scale.operation = 'DIVIDE'
+    mu_horizon_scale.location = (-50, -300)
+    mu_horizon_scale.inputs[1].default_value = 0.1
+    links.new(abs_mu.outputs['Value'], mu_horizon_scale.inputs[0])
+    
+    mu_horizon_clamp = nodes.new('ShaderNodeClamp')
+    mu_horizon_clamp.location = (100, -300)
+    links.new(mu_horizon_scale.outputs['Value'], mu_horizon_clamp.inputs['Value'])
+    
+    horizon_factor = nodes.new('ShaderNodeMath')
+    horizon_factor.operation = 'SUBTRACT'
+    horizon_factor.location = (250, -300)
+    horizon_factor.inputs[0].default_value = 1.0
+    links.new(mu_horizon_clamp.outputs['Result'], horizon_factor.inputs[1])
+    
+    # ==========================================================================
+    # POINT PARAMETERS: r_d, mu_d
+    # ==========================================================================
+    
+    r_sq = r_cam * r_cam
+    
+    d_sq = nodes.new('ShaderNodeMath')
+    d_sq.operation = 'MULTIPLY'
+    d_sq.location = (0, 50)
+    links.new(d.outputs['Value'], d_sq.inputs[0])
+    links.new(d.outputs['Value'], d_sq.inputs[1])
+    
+    r_mu = nodes.new('ShaderNodeMath')
+    r_mu.operation = 'MULTIPLY'
+    r_mu.location = (0, -50)
+    r_mu.inputs[0].default_value = r_cam
+    links.new(mu_clamp.outputs['Result'], r_mu.inputs[1])
+    
+    two_r_mu_d = nodes.new('ShaderNodeMath')
+    two_r_mu_d.operation = 'MULTIPLY'
+    two_r_mu_d.location = (150, -50)
+    two_r_mu_d.inputs[1].default_value = 2.0
+    links.new(r_mu.outputs['Value'], two_r_mu_d.inputs[0])
+    
+    two_r_mu_d_final = nodes.new('ShaderNodeMath')
+    two_r_mu_d_final.operation = 'MULTIPLY'
+    two_r_mu_d_final.location = (300, -50)
+    links.new(two_r_mu_d.outputs['Value'], two_r_mu_d_final.inputs[0])
+    links.new(d.outputs['Value'], two_r_mu_d_final.inputs[1])
+    
+    r_d_sq_1 = nodes.new('ShaderNodeMath')
+    r_d_sq_1.operation = 'ADD'
+    r_d_sq_1.location = (450, 0)
+    links.new(d_sq.outputs['Value'], r_d_sq_1.inputs[0])
+    links.new(two_r_mu_d_final.outputs['Value'], r_d_sq_1.inputs[1])
+    
+    r_d_sq = nodes.new('ShaderNodeMath')
+    r_d_sq.operation = 'ADD'
+    r_d_sq.location = (600, 0)
+    r_d_sq.inputs[1].default_value = r_sq
+    links.new(r_d_sq_1.outputs['Value'], r_d_sq.inputs[0])
+    
+    r_d_sq_safe = nodes.new('ShaderNodeMath')
+    r_d_sq_safe.operation = 'MAXIMUM'
+    r_d_sq_safe.location = (750, 0)
+    r_d_sq_safe.inputs[1].default_value = BOTTOM_RADIUS * BOTTOM_RADIUS
+    links.new(r_d_sq.outputs['Value'], r_d_sq_safe.inputs[0])
+    
+    r_d = nodes.new('ShaderNodeMath')
+    r_d.operation = 'SQRT'
+    r_d.location = (900, 0)
+    links.new(r_d_sq_safe.outputs['Value'], r_d.inputs[0])
+    
+    r_d_clamp = nodes.new('ShaderNodeClamp')
+    r_d_clamp.location = (1050, 0)
+    r_d_clamp.inputs['Min'].default_value = BOTTOM_RADIUS
+    r_d_clamp.inputs['Max'].default_value = TOP_RADIUS
+    links.new(r_d.outputs['Value'], r_d_clamp.inputs['Value'])
+    
+    r_mu_plus_d = nodes.new('ShaderNodeMath')
+    r_mu_plus_d.operation = 'ADD'
+    r_mu_plus_d.location = (600, -100)
+    links.new(r_mu.outputs['Value'], r_mu_plus_d.inputs[0])
+    links.new(d.outputs['Value'], r_mu_plus_d.inputs[1])
+    
+    r_d_safe = nodes.new('ShaderNodeMath')
+    r_d_safe.operation = 'MAXIMUM'
+    r_d_safe.location = (900, -100)
+    r_d_safe.inputs[1].default_value = 0.001
+    links.new(r_d_clamp.outputs['Result'], r_d_safe.inputs[0])
+    
+    mu_d = nodes.new('ShaderNodeMath')
+    mu_d.operation = 'DIVIDE'
+    mu_d.location = (1050, -100)
+    links.new(r_mu_plus_d.outputs['Value'], mu_d.inputs[0])
+    links.new(r_d_safe.outputs['Value'], mu_d.inputs[1])
+    
+    mu_d_clamp = nodes.new('ShaderNodeClamp')
+    mu_d_clamp.location = (1200, -100)
+    mu_d_clamp.inputs['Min'].default_value = -1.0
+    mu_d_clamp.inputs['Max'].default_value = 1.0
+    links.new(mu_d.outputs['Value'], mu_d_clamp.inputs['Value'])
+    
+    # Negated mu values for ground case
+    neg_mu = nodes.new('ShaderNodeMath')
+    neg_mu.operation = 'MULTIPLY'
+    neg_mu.location = (0, -200)
+    neg_mu.inputs[1].default_value = -1.0
+    links.new(mu_clamp.outputs['Result'], neg_mu.inputs[0])
+    
+    neg_mu_d = nodes.new('ShaderNodeMath')
+    neg_mu_d.operation = 'MULTIPLY'
+    neg_mu_d.location = (1350, -150)
+    neg_mu_d.inputs[1].default_value = -1.0
+    links.new(mu_d_clamp.outputs['Result'], neg_mu_d.inputs[0])
+    
+    # ==========================================================================
+    # SCATTERING UV - Using correct Bruneton 4D->2D parameterization
+    # Texture layout: Width = NU*MU_S*R = 8192, Height = MU = 128
+    # ==========================================================================
+    
+    # Precompute constants for camera position
+    MU_S_MIN = -0.207912  # cos(102 degrees) from Bruneton
+    rho_cam = math.sqrt(max(r_cam * r_cam - BOTTOM_RADIUS * BOTTOM_RADIUS, 0))
+    
+    # u_r for camera (constant)
+    x_r_cam = rho_cam / H
+    u_r_cam = 0.5 / SCATTERING_R + min(x_r_cam, 1.0) * (1 - 1/SCATTERING_R)
+    depth_cam = u_r_cam * (SCATTERING_R - 1)
+    depth_floor_cam = math.floor(depth_cam)
+    
+    # u_mu_s (constant for whole image since sun position is fixed)
+    x_mu_s = (mu_s_val - MU_S_MIN) / (1.0 - MU_S_MIN)
+    x_mu_s = max(0.0, min(1.0, x_mu_s))
+    u_mu_s_val = 0.5 / SCATTERING_MU_S + x_mu_s * (1 - 1/SCATTERING_MU_S)
+    
+    # u_nu = (nu + 1) / 2 - simple linear mapping, no half-pixel offset
+    nu_plus_1 = nodes.new('ShaderNodeMath')
+    nu_plus_1.operation = 'ADD'
+    nu_plus_1.location = (400, -400)
+    nu_plus_1.inputs[1].default_value = 1.0
+    links.new(nu_clamp.outputs['Result'], nu_plus_1.inputs[0])
+    
+    u_nu = nodes.new('ShaderNodeMath')
+    u_nu.operation = 'MULTIPLY'
+    u_nu.location = (550, -400)
+    u_nu.inputs[1].default_value = 0.5
+    links.new(nu_plus_1.outputs['Value'], u_nu.inputs[0])
+    
+    # tex_x = floor(u_nu * (NU_SIZE - 1))
+    tex_coord_x = nodes.new('ShaderNodeMath')
+    tex_coord_x.operation = 'MULTIPLY'
+    tex_coord_x.location = (700, -400)
+    tex_coord_x.inputs[1].default_value = SCATTERING_NU - 1
+    links.new(u_nu.outputs['Value'], tex_coord_x.inputs[0])
+    
+    tex_x = nodes.new('ShaderNodeMath')
+    tex_x.operation = 'FLOOR'
+    tex_x.location = (850, -400)
+    links.new(tex_coord_x.outputs['Value'], tex_x.inputs[0])
+    
+    # uvw_x = (tex_x + u_mu_s) / NU_SIZE
+    tex_x_plus_mus = nodes.new('ShaderNodeMath')
+    tex_x_plus_mus.operation = 'ADD'
+    tex_x_plus_mus.location = (1000, -400)
+    tex_x_plus_mus.inputs[1].default_value = u_mu_s_val
+    links.new(tex_x.outputs['Value'], tex_x_plus_mus.inputs[0])
+    
+    uvw_x = nodes.new('ShaderNodeMath')
+    uvw_x.operation = 'DIVIDE'
+    uvw_x.location = (1150, -400)
+    uvw_x.inputs[1].default_value = SCATTERING_NU
+    links.new(tex_x_plus_mus.outputs['Value'], uvw_x.inputs[0])
+    
+    # u_mu for camera: simplified linear mapping (mu+1)/2 with half-pixel offset
+    # (Full Bruneton uses distance-based, but linear works for ground-level camera)
+    mu_plus_1_cam = nodes.new('ShaderNodeMath')
+    mu_plus_1_cam.operation = 'ADD'
+    mu_plus_1_cam.location = (400, -500)
+    mu_plus_1_cam.inputs[1].default_value = 1.0
+    links.new(mu_clamp.outputs['Result'], mu_plus_1_cam.inputs[0])
+    
+    x_mu_cam = nodes.new('ShaderNodeMath')
+    x_mu_cam.operation = 'MULTIPLY'
+    x_mu_cam.location = (550, -500)
+    x_mu_cam.inputs[1].default_value = 0.5
+    links.new(mu_plus_1_cam.outputs['Value'], x_mu_cam.inputs[0])
+    
+    u_mu_cam = nodes.new('ShaderNodeMath')
+    u_mu_cam.operation = 'MULTIPLY'
+    u_mu_cam.location = (700, -500)
+    u_mu_cam.inputs[1].default_value = 1 - 1/SCATTERING_MU
+    links.new(x_mu_cam.outputs['Value'], u_mu_cam.inputs[0])
+    
+    u_mu_cam_final = nodes.new('ShaderNodeMath')
+    u_mu_cam_final.operation = 'ADD'
+    u_mu_cam_final.location = (850, -500)
+    u_mu_cam_final.inputs[1].default_value = 0.5/SCATTERING_MU
+    links.new(u_mu_cam.outputs['Value'], u_mu_cam_final.inputs[0])
+    
+    # Final UV for camera: U = (depth + uvw_x) / R_SIZE, V = 1 - u_mu
+    u_sum_cam = nodes.new('ShaderNodeMath')
+    u_sum_cam.operation = 'ADD'
+    u_sum_cam.location = (1300, -450)
+    u_sum_cam.inputs[0].default_value = depth_floor_cam
+    links.new(uvw_x.outputs['Value'], u_sum_cam.inputs[1])
+    
+    final_u_cam = nodes.new('ShaderNodeMath')
+    final_u_cam.operation = 'DIVIDE'
+    final_u_cam.location = (1450, -450)
+    final_u_cam.inputs[1].default_value = SCATTERING_R
+    links.new(u_sum_cam.outputs['Value'], final_u_cam.inputs[0])
+    
+    v_flip_cam = nodes.new('ShaderNodeMath')
+    v_flip_cam.operation = 'SUBTRACT'
+    v_flip_cam.location = (1300, -550)
+    v_flip_cam.inputs[0].default_value = 1.0
+    links.new(u_mu_cam_final.outputs['Value'], v_flip_cam.inputs[1])
+    
+    uv_scatter_cam = nodes.new('ShaderNodeCombineXYZ')
+    uv_scatter_cam.location = (1600, -500)
+    links.new(final_u_cam.outputs['Value'], uv_scatter_cam.inputs['X'])
+    links.new(v_flip_cam.outputs['Value'], uv_scatter_cam.inputs['Y'])
+    
+    # Sample scattering at camera
+    tex_scatter_cam = nodes.new('ShaderNodeTexImage')
+    tex_scatter_cam.location = (1800, -500)
+    tex_scatter_cam.image = scatter_img
+    tex_scatter_cam.interpolation = 'Linear'
+    tex_scatter_cam.extension = 'EXTEND'
+    links.new(uv_scatter_cam.outputs['Vector'], tex_scatter_cam.inputs['Vector'])
+    
+    # u_mu for point: use mu_d instead of mu
+    mu_plus_1_pt = nodes.new('ShaderNodeMath')
+    mu_plus_1_pt.operation = 'ADD'
+    mu_plus_1_pt.location = (400, -650)
+    mu_plus_1_pt.inputs[1].default_value = 1.0
+    links.new(mu_d_clamp.outputs['Result'], mu_plus_1_pt.inputs[0])
+    
+    x_mu_pt = nodes.new('ShaderNodeMath')
+    x_mu_pt.operation = 'MULTIPLY'
+    x_mu_pt.location = (550, -650)
+    x_mu_pt.inputs[1].default_value = 0.5
+    links.new(mu_plus_1_pt.outputs['Value'], x_mu_pt.inputs[0])
+    
+    u_mu_pt = nodes.new('ShaderNodeMath')
+    u_mu_pt.operation = 'MULTIPLY'
+    u_mu_pt.location = (700, -650)
+    u_mu_pt.inputs[1].default_value = 1 - 1/SCATTERING_MU
+    links.new(x_mu_pt.outputs['Value'], u_mu_pt.inputs[0])
+    
+    u_mu_pt_final = nodes.new('ShaderNodeMath')
+    u_mu_pt_final.operation = 'ADD'
+    u_mu_pt_final.location = (850, -650)
+    u_mu_pt_final.inputs[1].default_value = 0.5/SCATTERING_MU
+    links.new(u_mu_pt.outputs['Value'], u_mu_pt_final.inputs[0])
+    
+    # Final UV for point: U = (depth + uvw_x) / R_SIZE, V = 1 - u_mu_pt
+    # (Uses same uvw_x as camera since nu is the same)
+    u_sum_pt = nodes.new('ShaderNodeMath')
+    u_sum_pt.operation = 'ADD'
+    u_sum_pt.location = (1300, -650)
+    u_sum_pt.inputs[0].default_value = depth_floor_cam  # Same depth as camera for now
+    links.new(uvw_x.outputs['Value'], u_sum_pt.inputs[1])
+    
+    final_u_pt = nodes.new('ShaderNodeMath')
+    final_u_pt.operation = 'DIVIDE'
+    final_u_pt.location = (1450, -650)
+    final_u_pt.inputs[1].default_value = SCATTERING_R
+    links.new(u_sum_pt.outputs['Value'], final_u_pt.inputs[0])
+    
+    v_flip_pt = nodes.new('ShaderNodeMath')
+    v_flip_pt.operation = 'SUBTRACT'
+    v_flip_pt.location = (1300, -750)
+    v_flip_pt.inputs[0].default_value = 1.0
+    links.new(u_mu_pt_final.outputs['Value'], v_flip_pt.inputs[1])
+    
+    uv_scatter_pt = nodes.new('ShaderNodeCombineXYZ')
+    uv_scatter_pt.location = (1600, -700)
+    links.new(final_u_pt.outputs['Value'], uv_scatter_pt.inputs['X'])
+    links.new(v_flip_pt.outputs['Value'], uv_scatter_pt.inputs['Y'])
+    
+    # Sample scattering at point
+    tex_scatter_pt = nodes.new('ShaderNodeTexImage')
+    tex_scatter_pt.location = (1800, -700)
+    tex_scatter_pt.image = scatter_img
+    tex_scatter_pt.interpolation = 'Linear'
+    tex_scatter_pt.extension = 'EXTEND'
+    links.new(uv_scatter_pt.outputs['Vector'], tex_scatter_pt.inputs['Vector'])
+    
+    # ==========================================================================
+    # PHASE FUNCTIONS
+    # ==========================================================================
+    
+    # nu² for phase functions
+    nu_sq = nodes.new('ShaderNodeMath')
+    nu_sq.operation = 'MULTIPLY'
+    nu_sq.location = (1700, -300)
+    links.new(nu_clamp.outputs['Result'], nu_sq.inputs[0])
+    links.new(nu_clamp.outputs['Result'], nu_sq.inputs[1])
+    
+    # Rayleigh phase: (3/16π)(1 + cos²θ) ≈ 0.0596831 * (1 + nu²)
+    one_plus_nu_sq = nodes.new('ShaderNodeMath')
+    one_plus_nu_sq.operation = 'ADD'
+    one_plus_nu_sq.location = (1850, -300)
+    one_plus_nu_sq.inputs[0].default_value = 1.0
+    links.new(nu_sq.outputs['Value'], one_plus_nu_sq.inputs[1])
+    
+    rayleigh_phase = nodes.new('ShaderNodeMath')
+    rayleigh_phase.operation = 'MULTIPLY'
+    rayleigh_phase.location = (2000, -300)
+    rayleigh_phase.inputs[1].default_value = 0.0596831
+    links.new(one_plus_nu_sq.outputs['Value'], rayleigh_phase.inputs[0])
+    
+    # Mie phase: (3/8π) * ((1-g²)(1+nu²)) / ((2+g²)(1+g²-2g*nu)^1.5)
+    g = MIE_G
+    g_sq = g * g
+    mie_norm = (3.0 / (8.0 * math.pi)) * (1 - g_sq) / (2 + g_sq)
+    
+    # 1 + g² - 2g*nu
+    two_g_nu = nodes.new('ShaderNodeMath')
+    two_g_nu.operation = 'MULTIPLY'
+    two_g_nu.location = (1700, -450)
+    two_g_nu.inputs[1].default_value = 2.0 * g
+    links.new(nu_clamp.outputs['Result'], two_g_nu.inputs[0])
+    
+    denom_base = nodes.new('ShaderNodeMath')
+    denom_base.operation = 'SUBTRACT'
+    denom_base.location = (1850, -450)
+    denom_base.inputs[0].default_value = 1 + g_sq
+    links.new(two_g_nu.outputs['Value'], denom_base.inputs[1])
+    
+    denom_safe = nodes.new('ShaderNodeMath')
+    denom_safe.operation = 'MAXIMUM'
+    denom_safe.location = (2000, -450)
+    denom_safe.inputs[1].default_value = 0.001
+    links.new(denom_base.outputs['Value'], denom_safe.inputs[0])
+    
+    denom_pow = nodes.new('ShaderNodeMath')
+    denom_pow.operation = 'POWER'
+    denom_pow.location = (2150, -450)
+    denom_pow.inputs[1].default_value = 1.5
+    links.new(denom_safe.outputs['Value'], denom_pow.inputs[0])
+    
+    denom_inv = nodes.new('ShaderNodeMath')
+    denom_inv.operation = 'DIVIDE'
+    denom_inv.location = (2300, -450)
+    denom_inv.inputs[0].default_value = 1.0
+    links.new(denom_pow.outputs['Value'], denom_inv.inputs[1])
+    
+    mie_phase_unnorm = nodes.new('ShaderNodeMath')
+    mie_phase_unnorm.operation = 'MULTIPLY'
+    mie_phase_unnorm.location = (2450, -450)
+    links.new(one_plus_nu_sq.outputs['Value'], mie_phase_unnorm.inputs[0])
+    links.new(denom_inv.outputs['Value'], mie_phase_unnorm.inputs[1])
+    
+    mie_phase = nodes.new('ShaderNodeMath')
+    mie_phase.operation = 'MULTIPLY'
+    mie_phase.location = (2600, -450)
+    mie_phase.inputs[1].default_value = mie_norm
+    links.new(mie_phase_unnorm.outputs['Value'], mie_phase.inputs[0])
+    
+    # ==========================================================================
+    # APPLY PHASE TO SCATTERING
+    # ==========================================================================
+    
+    # Separate Rayleigh (RGB) and Mie (Alpha) from camera sample
+    sep_cam = nodes.new('ShaderNodeSeparateColor')
+    sep_cam.location = (1700, -550)
+    links.new(tex_scatter_cam.outputs['Color'], sep_cam.inputs['Color'])
+    
+    # Rayleigh_cam * rayleigh_phase
+    ray_cam_r = nodes.new('ShaderNodeMath')
+    ray_cam_r.operation = 'MULTIPLY'
+    ray_cam_r.location = (2100, -550)
+    links.new(sep_cam.outputs['Red'], ray_cam_r.inputs[0])
+    links.new(rayleigh_phase.outputs['Value'], ray_cam_r.inputs[1])
+    
+    ray_cam_g = nodes.new('ShaderNodeMath')
+    ray_cam_g.operation = 'MULTIPLY'
+    ray_cam_g.location = (2100, -600)
+    links.new(sep_cam.outputs['Green'], ray_cam_g.inputs[0])
+    links.new(rayleigh_phase.outputs['Value'], ray_cam_g.inputs[1])
+    
+    ray_cam_b = nodes.new('ShaderNodeMath')
+    ray_cam_b.operation = 'MULTIPLY'
+    ray_cam_b.location = (2100, -650)
+    links.new(sep_cam.outputs['Blue'], ray_cam_b.inputs[0])
+    links.new(rayleigh_phase.outputs['Value'], ray_cam_b.inputs[1])
+    
+    # Mie_cam (from alpha) * mie_phase
+    mie_cam = nodes.new('ShaderNodeMath')
+    mie_cam.operation = 'MULTIPLY'
+    mie_cam.location = (2750, -550)
+    links.new(tex_scatter_cam.outputs['Alpha'], mie_cam.inputs[0])
+    links.new(mie_phase.outputs['Value'], mie_cam.inputs[1])
+    
+    # Total S_cam = Rayleigh + Mie (Mie is grayscale, add to each channel)
+    s_cam_r = nodes.new('ShaderNodeMath')
+    s_cam_r.operation = 'ADD'
+    s_cam_r.location = (2900, -550)
+    links.new(ray_cam_r.outputs['Value'], s_cam_r.inputs[0])
+    links.new(mie_cam.outputs['Value'], s_cam_r.inputs[1])
+    
+    s_cam_g = nodes.new('ShaderNodeMath')
+    s_cam_g.operation = 'ADD'
+    s_cam_g.location = (2900, -600)
+    links.new(ray_cam_g.outputs['Value'], s_cam_g.inputs[0])
+    links.new(mie_cam.outputs['Value'], s_cam_g.inputs[1])
+    
+    s_cam_b = nodes.new('ShaderNodeMath')
+    s_cam_b.operation = 'ADD'
+    s_cam_b.location = (2900, -650)
+    links.new(ray_cam_b.outputs['Value'], s_cam_b.inputs[0])
+    links.new(mie_cam.outputs['Value'], s_cam_b.inputs[1])
+    
+    s_cam_rgb = nodes.new('ShaderNodeCombineColor')
+    s_cam_rgb.location = (3050, -600)
+    links.new(s_cam_r.outputs['Value'], s_cam_rgb.inputs['Red'])
+    links.new(s_cam_g.outputs['Value'], s_cam_rgb.inputs['Green'])
+    links.new(s_cam_b.outputs['Value'], s_cam_rgb.inputs['Blue'])
+    
+    # Same for point
+    sep_pt = nodes.new('ShaderNodeSeparateColor')
+    sep_pt.location = (1700, -750)
+    links.new(tex_scatter_pt.outputs['Color'], sep_pt.inputs['Color'])
+    
+    ray_pt_r = nodes.new('ShaderNodeMath')
+    ray_pt_r.operation = 'MULTIPLY'
+    ray_pt_r.location = (2100, -750)
+    links.new(sep_pt.outputs['Red'], ray_pt_r.inputs[0])
+    links.new(rayleigh_phase.outputs['Value'], ray_pt_r.inputs[1])
+    
+    ray_pt_g = nodes.new('ShaderNodeMath')
+    ray_pt_g.operation = 'MULTIPLY'
+    ray_pt_g.location = (2100, -800)
+    links.new(sep_pt.outputs['Green'], ray_pt_g.inputs[0])
+    links.new(rayleigh_phase.outputs['Value'], ray_pt_g.inputs[1])
+    
+    ray_pt_b = nodes.new('ShaderNodeMath')
+    ray_pt_b.operation = 'MULTIPLY'
+    ray_pt_b.location = (2100, -850)
+    links.new(sep_pt.outputs['Blue'], ray_pt_b.inputs[0])
+    links.new(rayleigh_phase.outputs['Value'], ray_pt_b.inputs[1])
+    
+    mie_pt = nodes.new('ShaderNodeMath')
+    mie_pt.operation = 'MULTIPLY'
+    mie_pt.location = (2750, -750)
+    links.new(tex_scatter_pt.outputs['Alpha'], mie_pt.inputs[0])
+    links.new(mie_phase.outputs['Value'], mie_pt.inputs[1])
+    
+    s_pt_r = nodes.new('ShaderNodeMath')
+    s_pt_r.operation = 'ADD'
+    s_pt_r.location = (2900, -750)
+    links.new(ray_pt_r.outputs['Value'], s_pt_r.inputs[0])
+    links.new(mie_pt.outputs['Value'], s_pt_r.inputs[1])
+    
+    s_pt_g = nodes.new('ShaderNodeMath')
+    s_pt_g.operation = 'ADD'
+    s_pt_g.location = (2900, -800)
+    links.new(ray_pt_g.outputs['Value'], s_pt_g.inputs[0])
+    links.new(mie_pt.outputs['Value'], s_pt_g.inputs[1])
+    
+    s_pt_b = nodes.new('ShaderNodeMath')
+    s_pt_b.operation = 'ADD'
+    s_pt_b.location = (2900, -850)
+    links.new(ray_pt_b.outputs['Value'], s_pt_b.inputs[0])
+    links.new(mie_pt.outputs['Value'], s_pt_b.inputs[1])
+    
+    s_pt_rgb = nodes.new('ShaderNodeCombineColor')
+    s_pt_rgb.location = (3050, -800)
+    links.new(s_pt_r.outputs['Value'], s_pt_rgb.inputs['Red'])
+    links.new(s_pt_g.outputs['Value'], s_pt_rgb.inputs['Green'])
+    links.new(s_pt_b.outputs['Value'], s_pt_rgb.inputs['Blue'])
+    
+    # ==========================================================================
+    # TRANSMITTANCE (from Step 6 - simplified version using exponential)
+    # Full LUT version is in Step 6, here we use exponential for simplicity
+    # ==========================================================================
+    
+    # Wavelength-dependent exponential: T = exp(-d * k)
+    neg_d_r = nodes.new('ShaderNodeMath')
+    neg_d_r.operation = 'MULTIPLY'
+    neg_d_r.location = (3200, 200)
+    neg_d_r.inputs[1].default_value = -0.02
+    links.new(d.outputs['Value'], neg_d_r.inputs[0])
+    
+    neg_d_g = nodes.new('ShaderNodeMath')
+    neg_d_g.operation = 'MULTIPLY'
+    neg_d_g.location = (3200, 100)
+    neg_d_g.inputs[1].default_value = -0.03
+    links.new(d.outputs['Value'], neg_d_g.inputs[0])
+    
+    neg_d_b = nodes.new('ShaderNodeMath')
+    neg_d_b.operation = 'MULTIPLY'
+    neg_d_b.location = (3200, 0)
+    neg_d_b.inputs[1].default_value = -0.05
+    links.new(d.outputs['Value'], neg_d_b.inputs[0])
+    
+    t_r = nodes.new('ShaderNodeMath')
+    t_r.operation = 'EXPONENT'
+    t_r.location = (3350, 200)
+    links.new(neg_d_r.outputs['Value'], t_r.inputs[0])
+    
+    t_g = nodes.new('ShaderNodeMath')
+    t_g.operation = 'EXPONENT'
+    t_g.location = (3350, 100)
+    links.new(neg_d_g.outputs['Value'], t_g.inputs[0])
+    
+    t_b = nodes.new('ShaderNodeMath')
+    t_b.operation = 'EXPONENT'
+    t_b.location = (3350, 0)
+    links.new(neg_d_b.outputs['Value'], t_b.inputs[0])
+    
+    t_rgb = nodes.new('ShaderNodeCombineColor')
+    t_rgb.location = (3500, 100)
+    links.new(t_r.outputs['Value'], t_rgb.inputs['Red'])
+    links.new(t_g.outputs['Value'], t_rgb.inputs['Green'])
+    links.new(t_b.outputs['Value'], t_rgb.inputs['Blue'])
+    
+    # ==========================================================================
+    # INSCATTER = S_cam - T × S_pt
+    # ==========================================================================
+    
+    t_times_spt = nodes.new('ShaderNodeMix')
+    t_times_spt.data_type = 'RGBA'
+    t_times_spt.blend_type = 'MULTIPLY'
+    t_times_spt.location = (3700, -400)
+    t_times_spt.inputs['Factor'].default_value = 1.0
+    links.new(t_rgb.outputs['Color'], t_times_spt.inputs[6])
+    links.new(s_pt_rgb.outputs['Color'], t_times_spt.inputs[7])
+    
+    inscatter = nodes.new('ShaderNodeMix')
+    inscatter.data_type = 'RGBA'
+    inscatter.blend_type = 'SUBTRACT'
+    inscatter.location = (3900, -300)
+    inscatter.inputs['Factor'].default_value = 1.0
+    links.new(s_cam_rgb.outputs['Color'], inscatter.inputs[6])
+    links.new(t_times_spt.outputs[2], inscatter.inputs[7])
+    
+    # Clamp inscatter to positive
+    inscatter_clamp = nodes.new('ShaderNodeMix')
+    inscatter_clamp.data_type = 'RGBA'
+    inscatter_clamp.blend_type = 'DARKEN'
+    inscatter_clamp.location = (4100, -300)
+    inscatter_clamp.inputs['Factor'].default_value = 1.0
+    inscatter_clamp.inputs[7].default_value = (0, 0, 0, 1)  # Clamp floor
+    links.new(inscatter.outputs[2], inscatter_clamp.inputs[6])
+    
+    # Actually use MAX with 0 for clamping
+    sep_inscatter = nodes.new('ShaderNodeSeparateColor')
+    sep_inscatter.location = (4100, -300)
+    links.new(inscatter.outputs[2], sep_inscatter.inputs['Color'])
+    
+    clamp_r = nodes.new('ShaderNodeMath')
+    clamp_r.operation = 'MAXIMUM'
+    clamp_r.location = (4250, -250)
+    clamp_r.inputs[1].default_value = 0.0
+    links.new(sep_inscatter.outputs['Red'], clamp_r.inputs[0])
+    
+    clamp_g = nodes.new('ShaderNodeMath')
+    clamp_g.operation = 'MAXIMUM'
+    clamp_g.location = (4250, -350)
+    clamp_g.inputs[1].default_value = 0.0
+    links.new(sep_inscatter.outputs['Green'], clamp_g.inputs[0])
+    
+    clamp_b = nodes.new('ShaderNodeMath')
+    clamp_b.operation = 'MAXIMUM'
+    clamp_b.location = (4250, -450)
+    clamp_b.inputs[1].default_value = 0.0
+    links.new(sep_inscatter.outputs['Blue'], clamp_b.inputs[0])
+    
+    inscatter_final = nodes.new('ShaderNodeCombineColor')
+    inscatter_final.location = (4400, -350)
+    links.new(clamp_r.outputs['Value'], inscatter_final.inputs['Red'])
+    links.new(clamp_g.outputs['Value'], inscatter_final.inputs['Green'])
+    links.new(clamp_b.outputs['Value'], inscatter_final.inputs['Blue'])
+    
+    # ==========================================================================
+    # OUTPUT
+    # ==========================================================================
+    
+    emission = nodes.new('ShaderNodeEmission')
+    emission.location = (4600, -200)
+    emission.inputs['Strength'].default_value = 1.0
+    
+    if debug_mode == 0:
+        links.new(inscatter_final.outputs['Color'], emission.inputs['Color'])
+    elif debug_mode == 1:
+        links.new(t_rgb.outputs['Color'], emission.inputs['Color'])
+    elif debug_mode == 2:
+        links.new(s_cam_rgb.outputs['Color'], emission.inputs['Color'])
+    elif debug_mode == 3:
+        links.new(s_pt_rgb.outputs['Color'], emission.inputs['Color'])
+    elif debug_mode == 4:
+        phase_rgb = nodes.new('ShaderNodeCombineColor')
+        phase_rgb.location = (4400, -100)
+        links.new(rayleigh_phase.outputs['Value'], phase_rgb.inputs['Red'])
+        links.new(mie_phase.outputs['Value'], phase_rgb.inputs['Green'])
+        phase_rgb.inputs['Blue'].default_value = 0.0
+        links.new(phase_rgb.outputs['Color'], emission.inputs['Color'])
+    
+    output = nodes.new('ShaderNodeOutputMaterial')
+    output.location = (4800, -200)
+    links.new(emission.outputs['Emission'], output.inputs['Surface'])
+    
+    # Assign to meshes
+    count = 0
+    for obj in bpy.context.scene.objects:
+        if obj.type == 'MESH':
+            if len(obj.data.materials) == 0:
+                obj.data.materials.append(mat)
+            else:
+                obj.data.materials[0] = mat
+            count += 1
+    
+    print(f"\n  Created: {mat_name}")
+    print(f"  Assigned to {count} meshes")
+    print(f"  Debug mode: {debug_mode} (0=inscatter, 1=T, 2=S_cam, 3=S_pt, 4=phase)")
+    
+    return mat
+
+
+# =============================================================================
+# STEP 9: Step 2.4 with wavelength-dependent transmittance
+# =============================================================================
+
+def apply_step_9_wavelength_transmittance():
+    """
+    Step 9: Copy of Step 2.4 with wavelength-dependent transmittance.
+    
+    The only change from Step 2.4 is the transmittance section:
+    - Step 2.4: T = exp(-d * 0.1) for all channels (grayscale)
+    - Step 9: T_r = exp(-d * 0.02), T_g = exp(-d * 0.03), T_b = exp(-d * 0.05)
+    
+    This provides wavelength-dependent atmospheric absorption which is more
+    physically accurate (blue scatters more, so blue transmittance drops faster).
+    """
+    print("=" * 60)
+    print("Step 9: Step 2.4 + Wavelength-Dependent Transmittance")
+    print("=" * 60)
+    print("  Base: Step 2.4's working scattering implementation")
+    print("  Change: T grayscale -> T_rgb with k_r=0.02, k_g=0.03, k_b=0.05")
+    print("")
+    
+    # Call Step 2.4 to create the material, then we'll modify the transmittance
+    mat = apply_step_2_4_inscatter()
+    
+    if mat is None:
+        return None
+    
+    # Now modify the transmittance nodes to be wavelength-dependent
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    
+    # Find the existing transmittance nodes to replace
+    # Step 2.4 creates: neg_d -> trans_approx -> t_rgb
+    neg_d = None
+    trans_approx = None
+    t_rgb = None
+    d_node = None
+    
+    for node in nodes:
+        if node.type == 'MATH' and node.operation == 'MULTIPLY':
+            # Check if this is neg_d (has -0.1 as input)
+            if abs(node.inputs[1].default_value - (-0.1)) < 0.01:
+                neg_d = node
+                # Find the d node connected to input 0
+                for link in mat.node_tree.links:
+                    if link.to_node == neg_d and link.to_socket == neg_d.inputs[0]:
+                        d_node = link.from_node
+                        break
+        elif node.type == 'MATH' and node.operation == 'EXPONENT':
+            trans_approx = node
+        elif node.type == 'COMBINE_COLOR':
+            # Check if this is t_rgb (connected from trans_approx)
+            for link in mat.node_tree.links:
+                if link.to_node == node and link.from_node == trans_approx:
+                    t_rgb = node
+                    break
+    
+    if not all([neg_d, trans_approx, t_rgb, d_node]):
+        print("  WARNING: Could not find transmittance nodes to modify")
+        print(f"    neg_d: {neg_d}, trans_approx: {trans_approx}, t_rgb: {t_rgb}, d: {d_node}")
+        return mat
+    
+    # Remove old connections - collect first, then remove
+    links_to_remove = []
+    for link in mat.node_tree.links:
+        if link.to_node == t_rgb:
+            links_to_remove.append(link)
+        elif link.from_node == neg_d and link.to_node == trans_approx:
+            links_to_remove.append(link)
+    
+    for link in links_to_remove:
+        links.remove(link)
+    
+    # Create wavelength-dependent transmittance
+    # k_r = 0.02, k_g = 0.03, k_b = 0.05
+    base_x, base_y = neg_d.location.x, neg_d.location.y
+    
+    # neg_d_r = d * -0.02
+    neg_d_r = nodes.new('ShaderNodeMath')
+    neg_d_r.operation = 'MULTIPLY'
+    neg_d_r.location = (base_x, base_y + 100)
+    neg_d_r.inputs[1].default_value = -0.02
+    links.new(d_node.outputs['Value'], neg_d_r.inputs[0])
+    
+    t_r = nodes.new('ShaderNodeMath')
+    t_r.operation = 'EXPONENT'
+    t_r.location = (base_x + 200, base_y + 100)
+    links.new(neg_d_r.outputs['Value'], t_r.inputs[0])
+    
+    # neg_d_g = d * -0.03
+    neg_d_g = nodes.new('ShaderNodeMath')
+    neg_d_g.operation = 'MULTIPLY'
+    neg_d_g.location = (base_x, base_y)
+    neg_d_g.inputs[1].default_value = -0.03
+    links.new(d_node.outputs['Value'], neg_d_g.inputs[0])
+    
+    t_g = nodes.new('ShaderNodeMath')
+    t_g.operation = 'EXPONENT'
+    t_g.location = (base_x + 200, base_y)
+    links.new(neg_d_g.outputs['Value'], t_g.inputs[0])
+    
+    # neg_d_b = d * -0.05
+    neg_d_b = nodes.new('ShaderNodeMath')
+    neg_d_b.operation = 'MULTIPLY'
+    neg_d_b.location = (base_x, base_y - 100)
+    neg_d_b.inputs[1].default_value = -0.05
+    links.new(d_node.outputs['Value'], neg_d_b.inputs[0])
+    
+    t_b = nodes.new('ShaderNodeMath')
+    t_b.operation = 'EXPONENT'
+    t_b.location = (base_x + 200, base_y - 100)
+    links.new(neg_d_b.outputs['Value'], t_b.inputs[0])
+    
+    # Connect to t_rgb
+    links.new(t_r.outputs['Value'], t_rgb.inputs['Red'])
+    links.new(t_g.outputs['Value'], t_rgb.inputs['Green'])
+    links.new(t_b.outputs['Value'], t_rgb.inputs['Blue'])
+    
+    print("  Modified transmittance to wavelength-dependent")
+    print("  T_r = exp(-d * 0.02), T_g = exp(-d * 0.03), T_b = exp(-d * 0.05)")
+    
+    return mat
+
+
+# =============================================================================
 # MAIN - Run when script is executed in Blender
 # =============================================================================
 

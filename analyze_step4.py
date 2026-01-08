@@ -1,7 +1,7 @@
 import OpenImageIO as oiio
 import numpy as np
 
-path = r'C:\Users\space\Documents\mattepaint\dev\atmospheric-scattering-4\tests\step5.1_fullScatteringImplementation_test_v001_01.exr'
+path = r"C:\Users\space\Documents\mattepaint\dev\atmospheric-scattering-4\tests\step6.1_brunetonTransmittance_test_v001_02.exr"
 
 inp = oiio.ImageInput.open(path)
 if not inp:

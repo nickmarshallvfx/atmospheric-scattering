@@ -1,5 +1,56 @@
 # Helios Aerial Perspective Changelog
 
+## V126 - January 8, 2026
+- **Step 9 created**: Step 2.4 + wavelength-dependent transmittance
+  - Calls Step 2.4 then modifies transmittance nodes in-place
+  - Grayscale T (k=-0.1) -> RGB T (k_r=0.02, k_g=0.03, k_b=0.05)
+  - Blue attenuates faster than red (physically correct)
+  - Safe approach: Step 2.4 preserved, Step 9 modifies copy
+
+## V125 - January 8, 2026
+- **Step 8 replaced with Step 9**: Proper implementation instead of wrapper
+
+## V124 - January 8, 2026
+- **Step 7 scattering UV fix FAILED**: Made output completely broken
+  - Attempted to simplify Bruneton UV but formula was wrong
+  - Step 2.4's complex create_scatter_uv helper is required
+
+## V123 - January 8, 2026
+- **Step 7: Full LUT Inscatter** implemented (HAD BUG - scattering UV was wrong)
+  - Combines LUT scattering with wavelength-dependent exponential T
+  - LUT-based Rayleigh (RGB) and Mie (Alpha) with phase functions
+  - Inscatter formula: S_cam - T × S_pt with positive clamping
+  - Debug modes: 0=inscatter, 1=T, 2=S_cam, 3=S_pt, 4=phase
+
+## V122 - January 8, 2026
+- **Horizon fallback**: Reverted to hard mu<0 cutoff, added exponential fallback
+  - When |mu| < 0.1: blend to wavelength-dependent exponential T
+  - Exponential uses k_r=0.02, k_g=0.03, k_b=0.05
+  - This avoids LUT instability near horizon while giving plausible values
+
+## V121 - January 8, 2026
+- **Horizon seam fix FAILED**: Smoothstep blend made horizon worse (0.98→0.63)
+  - Both sky and ground formulas give bad values at mu≈0
+  - Blending two bad values doesn't help
+
+## V120 - January 8, 2026
+- **Step 6: Bruneton Transmittance** implemented with ground intersection handling
+  - `apply_step_6_bruneton_transmittance(debug_mode)` function added
+  - Computes both sky and ground formulas, selects based on mu < 0
+  - Sky: `T = T(r, mu) / T(r_d, mu_d)`
+  - Ground: `T = T(r_d, -mu_d) / T(r, -mu)` (negated mu!)
+  - Debug modes: 0=full, 1=T_sky, 2=T_gnd, 3=ground_flag
+- Created `TRANSMITTANCE_DEBUG_LOG.md` for tracking attempts
+
+## V119 - January 8, 2026
+- **ROOT CAUSE FOUND** for LUT transmittance failure
+  - Failed implementation used sky formula for all rays
+  - Ground-hitting rays need: `T = T(r_d, -mu_d) / T(r, -mu)` (negated mu!)
+  - This flips lookup to "looking up" side of LUT, avoiding near-zero values
+  - Reference: Bruneton `functions.glsl` lines 493-518
+- Created `debug_transmittance.py` for detailed LUT analysis
+- Copied `functions.glsl` to reference/ for comparison
+
 ## V118 - January 8, 2026
 - **REVERTED** LUT-based transmittance - broke render (nearly black output)
 - Back to simplified exponential: `T = exp(-d × 0.1)`
@@ -8,7 +59,7 @@
 ## V117 - January 8, 2026
 - **LUT-based Transmittance ATTEMPTED** in Step 2.4 - FAILED
   - Implementation broke render (values ~0.01 instead of ~1.0)
-  - Issue: UV computation or ratio method incorrect
+  - Issue: Used wrong formula for ground-intersecting rays
   - Reverted in V118
 
 ## V116 - January 8, 2026
