@@ -1,5 +1,115 @@
 # Helios Aerial Perspective Changelog
 
+## V143 - January 9, 2026
+- **Add depth interpolation for dynamic r_p**:
+  - Refactored create_scatter_uv to return (uv_floor, uv_ceil, depth_frac)
+  - Sample scattering LUT at both floor and ceil depth layers
+  - Interpolate between samples using depth_frac
+  - Re-enabled dynamic r_p for S_pt with proper interpolation
+  - This should fix both discontinuities AND low-height scattering issue
+
+## V142 - January 9, 2026
+- **Revert to r_cam - identified root cause**:
+  - V141 still broken with discontinuities like V138
+  - Root cause: missing depth interpolation for 3D scattering LUT
+  - Scattering LUT has 32 r-slices; crossing slice boundaries without interpolation causes visible jumps
+  - Step 2.4's create_scatter_uv does this correctly (returns uv_floor, uv_ceil, depth_frac)
+  - TODO: Add proper depth interpolation for dynamic r_p
+
+## V141 - January 9, 2026 (BROKEN)
+- **Re-enable dynamic r_p**: FAILED - same discontinuity issue as V138
+  - Missing depth interpolation is the root cause
+
+## V140 - January 9, 2026
+- **Fix ground ray handling in scattering UV**:
+  - V139 showed bright blue line at ground intersection
+  - Root cause: Only non-ground formula implemented (u_mu = 0.5 + 0.5*coord)
+  - Added ground ray case: u_mu = 0.5 - 0.5*coord for mu < 0
+  - Mix between ground/non-ground based on mu sign
+
+## V139 - January 9, 2026
+- **Revert dynamic r_p**: Back to r_cam for S_pt
+  - V138 completely broken (wild values, discontinuities)
+  - Root cause: Clamp nodes have 'Result' output, code expected 'Value'
+  - TODO: Properly integrate dynamic r_p with correct output socket handling
+
+## V138 - January 9, 2026 (BROKEN)
+- **Attempted dynamic r_p**: FAILED - wild values, discontinuities
+  - Clamp node output socket mismatch caused broken UV coordinates
+
+## V137 - January 9, 2026
+- **Step 2.4b complete**: Full inscatter with LUT transmittance
+  - Added scattering UV helper and LUT sampling
+  - Inscatter = S_cam - T × S_pt with clamping >= 0
+  - Rayleigh phase function applied
+  - Debug modes: 0=full, 1=T_lut, 2=S_cam, 3=S_pt, 4=T_final, 6=T_exp
+
+## V136 - January 9, 2026
+- **Step 2.4b implemented**: Clean-build with LUT transmittance
+  - Builds geometry, sun params, point params from scratch
+  - r_p/mu_p shared between scattering and transmittance (as planned)
+  - Full ground check: mu < 0 AND r²(mu²-1) + bottom² >= 0
+  - Horizon fallback with HORIZON_EPSILON = 0.1
+  - Safe RGB division with DIV_EPSILON = 1e-4
+
+## V135 - January 9, 2026
+- **Step 2.4b specification**: New clean-build approach
+  - Created STEP_2_4B_IMPLEMENTATION_SPEC.md for Gemini review
+  - Decision: Build entire shader from scratch instead of node injection
+  - Key insight: Share r_d/mu_d nodes between scattering and transmittance
+  - Deprecates Step 11 approach (V128-V134 node injection failed)
+
+## V134 - January 9, 2026
+- **Step 11 FAILED**: Node injection still broken after multiple fixes
+  - Created duplicate geometry nodes causing inconsistencies
+  - Exponential fallback referenced wrong `d` variable
+  - Root cause: Node injection is inherently fragile
+
+## V133 - January 9, 2026
+- **Step 11 fix**: Correct output socket for reused nodes
+  - Bug: mu_d_clamp.outputs['Result'] but MATH nodes use 'Value'
+  - Fix: Use 'Value' output for MATH nodes (MAXIMUM)
+
+## V132 - January 9, 2026
+- **Step 11 fix**: Correct mu_p node finding
+  - Bug: mu_p finding looked for CLAMP, but Step 2.4 uses MAXIMUM/MINIMUM chain
+  - Fix: Find MAXIMUM(-1) connected to MINIMUM for mu_p clamping
+
+## V131 - January 9, 2026
+- **Step 11 fix**: Correct mu node finding
+  - Bug: mu finding looked for CLAMP, but Step 2.4 uses MULTIPLY pass-through
+  - Fix: Find MULTIPLY with 1.0 connected to DOT_PRODUCT, filter by location
+  - Added explicit clamp for mu in transmittance calculation
+
+## V130 - January 9, 2026
+- **Step 11 fix**: Reuse Step 2.4's existing r_p and mu_p nodes
+  - Bug: Was finding wrong d node (LENGTH instead of km-scaled MULTIPLY)
+  - Bug: Was recalculating r_d/mu_d instead of reusing Step 2.4's r_p/mu_p
+  - Fix: Find and reuse Step 2.4's existing nodes (d in km, mu, r_p=r_d, mu_p=mu_d)
+  - Simplified code by ~80 lines, removed redundant calculations
+
+## V129 - January 9, 2026
+- **Step 11 fix**: Dynamic r_d for transmittance UV calculation
+  - Bug: All 4 UV samples used fixed r_cam, causing T≈1 everywhere
+  - Fix: Denominator samples now use dynamic r_d for proper V coordinate
+  - create_trans_uv_dynamic() supports both constant r and node-based r
+  - Added debug modes 1-6 for T_lut, T_exp, horizon_factor, ground_flag, mu
+
+## V128 - January 8, 2026
+- **Step 11 created**: Step 2.4 scattering + Step 6 LUT transmittance
+  - Runs Step 2.4 for working scattering, then injects LUT transmittance
+  - LUT-based T with ground intersection handling (sky vs ground formula)
+  - Horizon fallback: exponential for |mu| < 0.1 to avoid discontinuity
+  - 4-point LUT sampling: T_sky = T(r,mu)/T(r_d,mu_d), T_gnd = T(r_d,-mu_d)/T(r,-mu)
+  - AOVs registered with Transmittance connected
+
+## V127 - January 8, 2026
+- **Step 10 created**: Step 9 + AOV outputs
+  - Registers 5 AOVs per rules: Sky, Transmittance, Rayleigh, Mie, SunDisk
+  - Transmittance AOV: connected to t_rgb (wavelength-dependent)
+  - Rayleigh AOV: combined inscatter (Mie separation TODO)
+  - Sky, Mie, SunDisk: placeholders (black) pending integration
+
 ## V126 - January 8, 2026
 - **Step 9 created**: Step 2.4 + wavelength-dependent transmittance
   - Calls Step 2.4 then modifies transmittance nodes in-place
