@@ -2567,6 +2567,7 @@ def apply_step_2_4_inscatter():
     
     # d in km (scene scale = 0.001)
     d = nodes.new('ShaderNodeMath')
+    d.name = 'Helios_D'
     d.operation = 'MULTIPLY'
     d.location = (-1000, 300)
     d.inputs[1].default_value = 0.001
@@ -2590,6 +2591,7 @@ def apply_step_2_4_inscatter():
     r_cam = BOTTOM_RADIUS + cam_alt_km
     
     r = nodes.new('ShaderNodeValue')
+    r.name = 'Helios_R'
     r.location = (-1000, 100)
     r.outputs['Value'].default_value = r_cam
     
@@ -2608,6 +2610,7 @@ def apply_step_2_4_inscatter():
     links.new(up_at_cam.outputs['Vector'], mu_dot.inputs[1])
     
     mu = nodes.new('ShaderNodeMath')
+    mu.name = 'Helios_Mu'
     mu.operation = 'MULTIPLY'
     mu.location = (-600, 100)
     mu.inputs[1].default_value = 1.0  # Pass through
@@ -2704,6 +2707,7 @@ def apply_step_2_4_inscatter():
     links.new(r_p_raw.outputs['Value'], r_p_min.inputs[0])
     
     r_p = nodes.new('ShaderNodeMath')
+    r_p.name = 'Helios_R_P'
     r_p.operation = 'MINIMUM'
     r_p.location = (800, -500)
     r_p.inputs[1].default_value = TOP_RADIUS
@@ -2736,6 +2740,7 @@ def apply_step_2_4_inscatter():
     links.new(mu_p_raw.outputs['Value'], mu_p_max.inputs[0])
     
     mu_p = nodes.new('ShaderNodeMath')
+    mu_p.name = 'Helios_Mu_P'
     mu_p.operation = 'MAXIMUM'
     mu_p.location = (600, -700)
     mu_p.inputs[1].default_value = -1.0
@@ -3230,7 +3235,7 @@ def apply_step_2_4_inscatter():
     links.new(tex_pt_ceil.outputs['Color'], s_pt.inputs[7])   # B
     
     # ==========================================================================
-    # TRANSMITTANCE T (simplified exponential - working version)
+    # TRANSMITTANCE T (simple exponential for render)
     # ==========================================================================
     
     # Simple exponential falloff: T = exp(-d * extinction_coeff)
@@ -3245,12 +3250,57 @@ def apply_step_2_4_inscatter():
     trans_approx.location = (3000, 100)
     links.new(neg_d.outputs['Value'], trans_approx.inputs[0])
     
-    # T as RGB (grayscale for now)
+    # T as RGB (grayscale for render path)
     t_rgb = nodes.new('ShaderNodeCombineColor')
+    t_rgb.name = 'Helios_T_RGB'
     t_rgb.location = (3200, 100)
     links.new(trans_approx.outputs['Value'], t_rgb.inputs['Red'])
     links.new(trans_approx.outputs['Value'], t_rgb.inputs['Green'])
     links.new(trans_approx.outputs['Value'], t_rgb.inputs['Blue'])
+    
+    # ==========================================================================
+    # PER-CHANNEL TRANSMITTANCE (for AOV only - doesn't affect render)
+    # ==========================================================================
+    
+    neg_d_r = nodes.new('ShaderNodeMath')
+    neg_d_r.operation = 'MULTIPLY'
+    neg_d_r.location = (2800, -200)
+    neg_d_r.inputs[1].default_value = -0.02  # Red: lowest extinction
+    links.new(d.outputs['Value'], neg_d_r.inputs[0])
+    
+    neg_d_g = nodes.new('ShaderNodeMath')
+    neg_d_g.operation = 'MULTIPLY'
+    neg_d_g.location = (2800, -300)
+    neg_d_g.inputs[1].default_value = -0.05  # Green: medium
+    links.new(d.outputs['Value'], neg_d_g.inputs[0])
+    
+    neg_d_b = nodes.new('ShaderNodeMath')
+    neg_d_b.operation = 'MULTIPLY'
+    neg_d_b.location = (2800, -400)
+    neg_d_b.inputs[1].default_value = -0.11  # Blue: highest extinction
+    links.new(d.outputs['Value'], neg_d_b.inputs[0])
+    
+    trans_aov_r = nodes.new('ShaderNodeMath')
+    trans_aov_r.operation = 'EXPONENT'
+    trans_aov_r.location = (3000, -200)
+    links.new(neg_d_r.outputs['Value'], trans_aov_r.inputs[0])
+    
+    trans_aov_g = nodes.new('ShaderNodeMath')
+    trans_aov_g.operation = 'EXPONENT'
+    trans_aov_g.location = (3000, -300)
+    links.new(neg_d_g.outputs['Value'], trans_aov_g.inputs[0])
+    
+    trans_aov_b = nodes.new('ShaderNodeMath')
+    trans_aov_b.operation = 'EXPONENT'
+    trans_aov_b.location = (3000, -400)
+    links.new(neg_d_b.outputs['Value'], trans_aov_b.inputs[0])
+    
+    t_rgb_aov = nodes.new('ShaderNodeCombineColor')
+    t_rgb_aov.name = 'Helios_T_RGB_AOV'
+    t_rgb_aov.location = (3200, -300)
+    links.new(trans_aov_r.outputs['Value'], t_rgb_aov.inputs['Red'])
+    links.new(trans_aov_g.outputs['Value'], t_rgb_aov.inputs['Green'])
+    links.new(trans_aov_b.outputs['Value'], t_rgb_aov.inputs['Blue'])
     
     # ==========================================================================
     # INSCATTER = S_cam - T × S_pt
@@ -3258,6 +3308,7 @@ def apply_step_2_4_inscatter():
     
     # T × S_pt
     t_times_spt = nodes.new('ShaderNodeMix')
+    t_times_spt.name = 'Helios_TxSpt'
     t_times_spt.data_type = 'RGBA'
     t_times_spt.blend_type = 'MULTIPLY'
     t_times_spt.location = (3400, 0)
@@ -3267,6 +3318,7 @@ def apply_step_2_4_inscatter():
     
     # S_cam - T × S_pt (using interpolated s_cam)
     inscatter = nodes.new('ShaderNodeMix')
+    inscatter.name = 'Helios_Inscatter'
     inscatter.data_type = 'RGBA'
     inscatter.blend_type = 'SUBTRACT'
     inscatter.location = (4850, 200)
@@ -3387,18 +3439,21 @@ def apply_step_2_4_inscatter():
     
     # Apply Rayleigh phase to RGB
     ray_r = nodes.new('ShaderNodeMath')
+    ray_r.name = 'Helios_Ray_R'
     ray_r.operation = 'MULTIPLY'
     ray_r.location = (5400, 250)
     links.new(clamp_r.outputs['Value'], ray_r.inputs[0])
     links.new(rayleigh_phase.outputs['Value'], ray_r.inputs[1])
     
     ray_g = nodes.new('ShaderNodeMath')
+    ray_g.name = 'Helios_Ray_G'
     ray_g.operation = 'MULTIPLY'
     ray_g.location = (5400, 150)
     links.new(clamp_g.outputs['Value'], ray_g.inputs[0])
     links.new(rayleigh_phase.outputs['Value'], ray_g.inputs[1])
     
     ray_b = nodes.new('ShaderNodeMath')
+    ray_b.name = 'Helios_Ray_B'
     ray_b.operation = 'MULTIPLY'
     ray_b.location = (5400, 50)
     links.new(clamp_b.outputs['Value'], ray_b.inputs[0])
@@ -3449,6 +3504,7 @@ def apply_step_2_4_inscatter():
     
     # Apply Mie phase function
     mie_result = nodes.new('ShaderNodeMath')
+    mie_result.name = 'Helios_Mie_Result'
     mie_result.operation = 'MULTIPLY'
     mie_result.location = (5200, -350)
     links.new(mie_clamp.outputs['Value'], mie_result.inputs[0])
@@ -3540,6 +3596,62 @@ def apply_step_2_4_inscatter():
     print(f"Assigned to {mesh_count} meshes")
     print(f"\nExpected: Blue-ish inscatter, stronger for distant objects")
     print(f"Note: Using simplified exponential transmittance for now")
+    
+    # ==========================================================================
+    # AOVs: Tap into existing nodes (no modifications to render path)
+    # ==========================================================================
+    
+    view_layer = bpy.context.view_layer
+    
+    # Remove existing AOVs if present
+    for aov_name in ["Helios_Rayleigh", "Helios_Mie", "Helios_Transmittance"]:
+        for existing in list(view_layer.aovs):
+            if existing.name == aov_name:
+                view_layer.aovs.remove(existing)
+    
+    # --- RAYLEIGH AOV ---
+    aov_ray = view_layer.aovs.add()
+    aov_ray.name = "Helios_Rayleigh"
+    aov_ray.type = 'COLOR'
+    
+    rayleigh_aov_combine = nodes.new('ShaderNodeCombineColor')
+    rayleigh_aov_combine.location = (5600, 400)
+    links.new(ray_r.outputs['Value'], rayleigh_aov_combine.inputs['Red'])
+    links.new(ray_g.outputs['Value'], rayleigh_aov_combine.inputs['Green'])
+    links.new(ray_b.outputs['Value'], rayleigh_aov_combine.inputs['Blue'])
+    
+    aov_ray_node = nodes.new('ShaderNodeOutputAOV')
+    aov_ray_node.location = (5800, 400)
+    aov_ray_node.aov_name = "Helios_Rayleigh"
+    links.new(rayleigh_aov_combine.outputs['Color'], aov_ray_node.inputs['Color'])
+    
+    # --- MIE AOV (grayscale for now) ---
+    aov_mie = view_layer.aovs.add()
+    aov_mie.name = "Helios_Mie"
+    aov_mie.type = 'COLOR'
+    
+    mie_aov_combine = nodes.new('ShaderNodeCombineColor')
+    mie_aov_combine.location = (5600, 300)
+    links.new(mie_result.outputs['Value'], mie_aov_combine.inputs['Red'])
+    links.new(mie_result.outputs['Value'], mie_aov_combine.inputs['Green'])
+    links.new(mie_result.outputs['Value'], mie_aov_combine.inputs['Blue'])
+    
+    aov_mie_node = nodes.new('ShaderNodeOutputAOV')
+    aov_mie_node.location = (5800, 300)
+    aov_mie_node.aov_name = "Helios_Mie"
+    links.new(mie_aov_combine.outputs['Color'], aov_mie_node.inputs['Color'])
+    
+    # --- TRANSMITTANCE AOV (per-channel, separate from render path) ---
+    aov_trans = view_layer.aovs.add()
+    aov_trans.name = "Helios_Transmittance"
+    aov_trans.type = 'COLOR'
+    
+    aov_trans_node = nodes.new('ShaderNodeOutputAOV')
+    aov_trans_node.location = (5800, 200)
+    aov_trans_node.aov_name = "Helios_Transmittance"
+    links.new(t_rgb_aov.outputs['Color'], aov_trans_node.inputs['Color'])
+    
+    print(f"  AOVs: Helios_Rayleigh, Helios_Mie, Helios_Transmittance")
     
     return mat
 
@@ -9803,64 +9915,14 @@ def apply_step_2_4c_lut_inscatter(debug_mode=0):
     trans_img.colorspace_settings.name = 'Non-Color'
     print(f"  Transmittance LUT: {trans_img.size[0]}x{trans_img.size[1]}")
     
-    # Find the existing nodes we need to connect to
-    # These are created by apply_step_2_4_lut_scattering
-    d_node = None
-    mu_node = None
-    r_node = None
-    r_p_node = None
-    mu_p_node = None
-    t_rgb_node = None
-    t_times_spt_node = None
-    
-    for node in nodes:
-        # Find d (distance) - MULTIPLY by 0.001
-        if node.type == 'MATH' and node.operation == 'MULTIPLY':
-            if hasattr(node.inputs[1], 'default_value') and abs(node.inputs[1].default_value - 0.001) < 0.0001:
-                d_node = node
-        
-        # Find r (camera radius) - VALUE node near 6360
-        if node.type == 'VALUE':
-            val = node.outputs['Value'].default_value
-            if val > 6359 and val < 6421:
-                r_node = node
-        
-        # Find t_rgb (COMBINE_COLOR connected to transmittance)
-        if node.type == 'COMBCOL' and node.location.x > 3100 and node.location.x < 3300:
-            t_rgb_node = node
-        
-        # Find t_times_spt (MIX with MULTIPLY blend)
-        if node.type == 'MIX' and node.blend_type == 'MULTIPLY':
-            t_times_spt_node = node
-    
-    # Find mu by tracing from mu_dot
-    for node in nodes:
-        if node.type == 'VECT_MATH' and node.operation == 'DOT_PRODUCT':
-            # Check if output goes to a passthrough MULTIPLY
-            for link in node.outputs['Value'].links:
-                if link.to_node.type == 'MATH' and link.to_node.operation == 'MULTIPLY':
-                    if hasattr(link.to_node.inputs[1], 'default_value'):
-                        if abs(link.to_node.inputs[1].default_value - 1.0) < 0.01:
-                            # This is the mu passthrough, but check location
-                            if link.to_node.location.x > -700 and link.to_node.location.x < -500:
-                                if link.to_node.location.y > 50 and link.to_node.location.y < 150:
-                                    mu_node = link.to_node
-                                    break
-    
-    # Find r_p and mu_p by operation and location
-    for node in nodes:
-        # r_p is MINIMUM with TOP_RADIUS
-        if node.type == 'MATH' and node.operation == 'MINIMUM':
-            if hasattr(node.inputs[1], 'default_value'):
-                if abs(node.inputs[1].default_value - TOP_RADIUS) < 1:
-                    r_p_node = node
-        
-        # mu_p is MAXIMUM with -1.0 for clamping
-        if node.type == 'MATH' and node.operation == 'MAXIMUM':
-            if hasattr(node.inputs[1], 'default_value'):
-                if abs(node.inputs[1].default_value - (-1.0)) < 0.01:
-                    if node.location.y < -600:  # mu_p is lower in the graph
-                        mu_p_node = node
+    # Find ALL nodes by name (no fragile location-based searching)
+    d_node = nodes.get('Helios_D')
+    mu_node = nodes.get('Helios_Mu')
+    r_node = nodes.get('Helios_R')
+    r_p_node = nodes.get('Helios_R_P')
+    mu_p_node = nodes.get('Helios_Mu_P')
+    t_rgb_node = nodes.get('Helios_T_RGB')
+    t_times_spt_node = nodes.get('Helios_TxSpt')
     
     # Verify we found all required nodes
     print(f"  Found d_node: {d_node is not None}")
@@ -10198,6 +10260,7 @@ def apply_step_2_4c_lut_inscatter(debug_mode=0):
     
     # Final transmittance: blend LUT with exponential
     t_final = nodes.new('ShaderNodeMix')
+    t_final.name = 'Helios_T_Final'
     t_final.data_type = 'RGBA'
     t_final.blend_type = 'MIX'
     t_final.location = (6100, -1100)
@@ -10207,6 +10270,90 @@ def apply_step_2_4c_lut_inscatter(debug_mode=0):
     
     # Connect final transmittance to t_times_spt
     links.new(t_final.outputs[2], t_times_spt_node.inputs[6])
+    
+    # DEBUG: Verify t_times_spt connections after modification
+    print(f"\n  DEBUG: t_times_spt connections after modification:")
+    print(f"    inputs[6] (A) links: {[l.from_node.name for l in t_times_spt_node.inputs[6].links]}")
+    print(f"    inputs[7] (B) links: {[l.from_node.name for l in t_times_spt_node.inputs[7].links]}")
+    print(f"    outputs[2] links to: {[l.to_node.name for l in t_times_spt_node.outputs[2].links]}")
+    
+    # Also check inscatter node
+    inscatter_node = nodes.get('Helios_Inscatter')
+    if inscatter_node:
+        print(f"  DEBUG: inscatter connections:")
+        print(f"    inputs[6] (S_cam) links: {[l.from_node.name for l in inscatter_node.inputs[6].links]}")
+        print(f"    inputs[7] (T×S_pt) links: {[l.from_node.name for l in inscatter_node.inputs[7].links]}")
+    else:
+        print(f"  DEBUG: inscatter node NOT FOUND!")
+    
+    # ==========================================================================
+    # AOVs: ALL added here AFTER modifications complete
+    # ==========================================================================
+    
+    view_layer = bpy.context.view_layer
+    
+    # Find the named Rayleigh and Mie nodes
+    ray_r = nodes.get('Helios_Ray_R')
+    ray_g = nodes.get('Helios_Ray_G')
+    ray_b = nodes.get('Helios_Ray_B')
+    mie_result = nodes.get('Helios_Mie_Result')
+    
+    print(f"  Found ray_r: {ray_r is not None}")
+    print(f"  Found ray_g: {ray_g is not None}")
+    print(f"  Found ray_b: {ray_b is not None}")
+    print(f"  Found mie_result: {mie_result is not None}")
+    
+    # Remove existing AOVs if present
+    for aov_name in ["Helios_Transmittance", "Helios_Rayleigh", "Helios_Mie"]:
+        for existing in list(view_layer.aovs):
+            if existing.name == aov_name:
+                view_layer.aovs.remove(existing)
+    
+    # --- TRANSMITTANCE AOV ---
+    aov_trans = view_layer.aovs.add()
+    aov_trans.name = "Helios_Transmittance"
+    aov_trans.type = 'COLOR'
+    
+    aov_trans_node = nodes.new('ShaderNodeOutputAOV')
+    aov_trans_node.location = (6300, -1100)
+    aov_trans_node.aov_name = "Helios_Transmittance"
+    links.new(t_final.outputs[2], aov_trans_node.inputs['Color'])
+    
+    # --- RAYLEIGH AOV ---
+    if ray_r and ray_g and ray_b:
+        aov_ray = view_layer.aovs.add()
+        aov_ray.name = "Helios_Rayleigh"
+        aov_ray.type = 'COLOR'
+        
+        rayleigh_combine = nodes.new('ShaderNodeCombineColor')
+        rayleigh_combine.location = (6300, -1200)
+        links.new(ray_r.outputs['Value'], rayleigh_combine.inputs['Red'])
+        links.new(ray_g.outputs['Value'], rayleigh_combine.inputs['Green'])
+        links.new(ray_b.outputs['Value'], rayleigh_combine.inputs['Blue'])
+        
+        aov_ray_node = nodes.new('ShaderNodeOutputAOV')
+        aov_ray_node.location = (6500, -1200)
+        aov_ray_node.aov_name = "Helios_Rayleigh"
+        links.new(rayleigh_combine.outputs['Color'], aov_ray_node.inputs['Color'])
+    
+    # --- MIE AOV ---
+    if mie_result:
+        aov_mie = view_layer.aovs.add()
+        aov_mie.name = "Helios_Mie"
+        aov_mie.type = 'COLOR'
+        
+        mie_combine = nodes.new('ShaderNodeCombineColor')
+        mie_combine.location = (6300, -1300)
+        links.new(mie_result.outputs['Value'], mie_combine.inputs['Red'])
+        links.new(mie_result.outputs['Value'], mie_combine.inputs['Green'])
+        links.new(mie_result.outputs['Value'], mie_combine.inputs['Blue'])
+        
+        aov_mie_node = nodes.new('ShaderNodeOutputAOV')
+        aov_mie_node.location = (6500, -1300)
+        aov_mie_node.aov_name = "Helios_Mie"
+        links.new(mie_combine.outputs['Color'], aov_mie_node.inputs['Color'])
+    
+    print(f"  AOVs connected: Transmittance, Rayleigh, Mie")
     
     # Handle debug modes
     if debug_mode > 0:
@@ -10225,6 +10372,20 @@ def apply_step_2_4c_lut_inscatter(debug_mode=0):
             if debug_mode == 1:
                 links.new(t_final.outputs[2], emission_node.inputs['Color'])
                 print("  DEBUG: Showing T (LUT transmittance)")
+            elif debug_mode == 2:
+                # Show inscatter directly to verify it has values
+                inscatter_node = nodes.get('Helios_Inscatter')
+                if inscatter_node:
+                    links.new(inscatter_node.outputs[2], emission_node.inputs['Color'])
+                    print("  DEBUG: Showing inscatter (S_cam - T×S_pt)")
+            elif debug_mode == 3:
+                # Show t_times_spt (T × S_pt)
+                links.new(t_times_spt_node.outputs[2], emission_node.inputs['Color'])
+                print("  DEBUG: Showing T×S_pt")
+            elif debug_mode == 4:
+                # Show exponential transmittance for comparison
+                links.new(t_exp_rgb.outputs['Color'], emission_node.inputs['Color'])
+                print("  DEBUG: Showing exponential T (for comparison)")
             elif debug_mode == 5:
                 gf_rgb = nodes.new('ShaderNodeCombineColor')
                 gf_rgb.location = (6200, -1500)

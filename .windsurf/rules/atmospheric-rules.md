@@ -28,7 +28,7 @@ You are a principal software engineer with expertise in rendering and atmospheri
 # Absolute Requirements
 
 - Atmospherics that match the sky in the background.
-- AOV's for (at minimum) Sky, Transmittance, Inscattering.
+- AOV's for (at minimum) Sky, Transmittance, Rayleigh Scattering, Mie Scattering, Sun Disk.
 - Object shadowing on the atmosphere.
 - An easy to use UI for setting up the atmospheric scattering.
 - Artistic controls that allow the user to retain the same functionality as our Bruneton implementation in the atmospheric-scattering-2 repository.
